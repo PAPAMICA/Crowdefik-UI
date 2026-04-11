@@ -10,6 +10,10 @@ import { AlertsPage } from './pages/AlertsPage'
 import { DecisionsPage } from './pages/DecisionsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { AdminPage } from './pages/AdminPage'
+import { TraefikPage } from './pages/TraefikPage'
+import { CrowdSecPage } from './pages/CrowdSecPage'
+import { ProfilePage } from './pages/ProfilePage'
+import { AuditPage } from './pages/AuditPage'
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { me, loading } = useAuth()
@@ -36,8 +40,12 @@ export default function App() {
               <Route path="/routers" element={<RoutersPage />} />
               <Route path="/alerts" element={<AlertsPage />} />
               <Route path="/decisions" element={<DecisionsPage />} />
+              <Route path="/traefik" element={<TraefikPage />} />
+              <Route path="/crowdsec" element={<CrowdSecPage />} />
+              <Route path="/profile" element={<ProfilePage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/admin" element={<AdminPage />} />
+              <Route path="/audit" element={<AuditPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

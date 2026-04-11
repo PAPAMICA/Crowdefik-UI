@@ -1,10 +1,29 @@
-import { AlertTriangle, Filter, Info, RefreshCw, Search, Settings } from 'lucide-react'
+import { AlertTriangle, Download, Filter, Info, RefreshCw, Search, Settings, ShieldBan } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Navigate, Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { CountryFlag } from '../components/CountryFlag'
 import { IpBadge } from '../components/IpBadge'
+
+function exportCSV(rows: Alert[], filename: string) {
+  const headers = ['ID', 'Scenario', 'Source IP', 'Country', 'Service', 'Events', 'Started']
+  const lines = rows.map((a) => [
+    a.id ?? '',
+    String(a.scenario ?? '').replace('crowdsecurity/', ''),
+    String(a.source?.ip ?? a.source?.value ?? ''),
+    String(a.source?.cn ?? ''),
+    a._target_host ?? '',
+    a.events_count ?? 0,
+    a.start_at ? new Date(a.start_at).toISOString() : '',
+  ])
+  const csv = [headers, ...lines].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
 
 type CrowdsecStatus = {
   bouncer_configured: boolean
@@ -89,6 +108,8 @@ function Pagination({ page, total, pageSize, onChange }: { page: number; total: 
   )
 }
 
+type BanModal = { ip: string } | null
+
 export function AlertsPage() {
   const { me, loading } = useAuth()
   const [rows, setRows] = useState<Alert[]>([])
@@ -97,6 +118,33 @@ export function AlertsPage() {
   const [scenarioFilter, setScenarioFilter] = useState('all')
   const [serviceFilter, setServiceFilter] = useState('all')
   const [page, setPage] = useState(1)
+  const [banModal, setBanModal] = useState<BanModal>(null)
+  const [banDuration, setBanDuration] = useState('24h')
+  const [banReason, setBanReason] = useState('manual')
+  const [banning, setBanning] = useState(false)
+  const [banMsg, setBanMsg] = useState<{ text: string; ok: boolean } | null>(null)
+
+  async function handleBan() {
+    if (!banModal) return
+    setBanning(true)
+    setBanMsg(null)
+    try {
+      const res = await apiFetch('/api/crowdsec/decisions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip: banModal.ip, duration: banDuration, reason: banReason }),
+      })
+      if (res.ok) {
+        setBanMsg({ text: `${banModal.ip} banned for ${banDuration}`, ok: true })
+        setTimeout(() => setBanModal(null), 1500)
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setBanMsg({ text: (err as { detail?: string }).detail ?? 'Ban failed', ok: false })
+      }
+    } finally {
+      setBanning(false)
+    }
+  }
 
   async function loadData() {
     const [alertsRes, statusRes] = await Promise.all([
@@ -147,12 +195,18 @@ export function AlertsPage() {
             {filtered.length} of {rows.length} alerts — click an IP for details
           </p>
         </div>
-        <button
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-          type="button" onClick={() => void loadData()}
-        >
-          <RefreshCw className="h-4 w-4" /> Refresh
-        </button>
+        <div className="flex gap-2">
+          <button type="button" onClick={() => exportCSV(filtered, `alerts-${new Date().toISOString().slice(0,10)}.csv`)}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+            <Download className="h-4 w-4" /> Export CSV
+          </button>
+          <button
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+            type="button" onClick={() => void loadData()}
+          >
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </button>
+        </div>
       </div>
 
       {/* Machine credentials warning */}
@@ -210,6 +264,7 @@ export function AlertsPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Service ciblé</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-slate-400">Events</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Started</th>
+                {me?.is_superuser && <th className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-slate-400" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
@@ -242,12 +297,24 @@ export function AlertsPage() {
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium dark:bg-slate-700 dark:text-slate-300">{events}</span>
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">{startAt}</td>
+                    {me?.is_superuser && (
+                      <td className="px-4 py-3">
+                        {ip && (
+                          <button type="button"
+                            onClick={() => { setBanModal({ ip }); setBanMsg(null) }}
+                            className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-100 dark:border-red-500/30 dark:bg-red-900/20 dark:text-red-400"
+                            title="Ban this IP">
+                            <ShieldBan className="h-3 w-3" /> Ban
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 )
               })}
               {!paged.length && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-sm text-slate-400">
+                  <td colSpan={me?.is_superuser ? 6 : 5} className="px-4 py-12 text-center text-sm text-slate-400">
                     {rows.length ? 'No alerts match filters' : 'No alerts — check CrowdSec settings and machine credentials'}
                   </td>
                 </tr>
@@ -257,6 +324,54 @@ export function AlertsPage() {
         </div>
         <Pagination page={page} total={filtered.length} pageSize={PAGE_SIZE} onChange={setPage} />
       </div>
+
+      {/* Ban IP modal */}
+      {banModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setBanModal(null)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+              <ShieldBan className="h-4 w-4 text-red-500" />
+              <span className="font-semibold text-slate-900 dark:text-white">Ban IP</span>
+              <code className="ml-auto font-mono text-xs text-slate-500">{banModal.ip}</code>
+            </div>
+            <div className="space-y-4 p-5">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">Duration</label>
+                <select value={banDuration} onChange={(e) => setBanDuration(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  <option value="1h">1 hour</option>
+                  <option value="6h">6 hours</option>
+                  <option value="24h">24 hours</option>
+                  <option value="72h">3 days</option>
+                  <option value="168h">1 week</option>
+                  <option value="720h">1 month</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">Reason</label>
+                <input type="text" value={banReason} onChange={(e) => setBanReason(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+              </div>
+              {banMsg && (
+                <div className={`rounded-xl px-3 py-2 text-xs ${banMsg.ok ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'}`}>
+                  {banMsg.text}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setBanModal(null)}
+                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  Cancel
+                </button>
+                <button type="button" onClick={() => void handleBan()} disabled={banning}
+                  className="flex-1 rounded-xl bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60">
+                  {banning ? 'Banning…' : 'Confirm ban'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

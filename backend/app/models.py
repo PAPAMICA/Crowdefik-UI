@@ -96,3 +96,16 @@ class IpGeoCache(Base):
     city = mapped_column(String(128), nullable=True)
     isp = mapped_column(String(256), nullable=True)
     updated_at = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AuditLog(Base):
+    """Tracks security-relevant actions performed by users."""
+    __tablename__ = "audit_log"
+
+    id = mapped_column(Integer, primary_key=True)
+    user_id = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    username = mapped_column(String(256), nullable=False)
+    action = mapped_column(String(64), nullable=False, index=True)
+    target = mapped_column(String(512), nullable=True)
+    detail = mapped_column(Text, nullable=True)
+    created_at = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)

@@ -1,10 +1,12 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import allowed_router_names, get_current_user
 from app.core import cache as cache_mod
+from app.core.audit import log_action
 from app.db import get_db
 from app.integrations import crowdsec_client, traefik_client
 from app.integrations.instance_settings import (
@@ -16,6 +18,13 @@ from app.models import User
 from app.services.routers_view import build_router_rows, filter_rows_for_user
 from app.services.scope_filter import blob_matches_hosts, hosts_from_rules
 from app.settings import get_settings
+
+
+class BanIn(BaseModel):
+    ip: str
+    duration: str = "24h"
+    reason: str = "manual"
+    type: str = "ban"
 
 router = APIRouter(prefix="/crowdsec", tags=["crowdsec"])
 
@@ -78,6 +87,23 @@ def _enrich_decisions_with_service(db: Session, decisions: list[dict[str, Any]])
     return decisions
 
 
+@router.post("/decisions")
+def ban_ip(
+    body: BanIn,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Manually ban an IP via CrowdSec LAPI (requires watcher credentials + superuser)."""
+    if not user.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser required")
+    result = crowdsec_client.add_decision(db, ip=body.ip, duration=body.duration, reason=body.reason, decision_type=body.type)
+    if not result.get("ok"):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result.get("error", "Unknown error"))
+    cache_mod.invalidate_prefix("crowdsec:")
+    log_action(db, user, "ban", target=body.ip, detail=f"duration={body.duration} reason={body.reason}")
+    return result
+
+
 @router.delete("/decisions/{decision_id}")
 def unban_decision(
     decision_id: int,
@@ -90,9 +116,25 @@ def unban_decision(
     result = crowdsec_client.delete_decision(db, decision_id)
     if not result.get("ok"):
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result.get("error", "Unknown error"))
-    # Invalidate cache so the decision list refreshes
     cache_mod.invalidate_prefix("crowdsec:")
+    log_action(db, user, "unban", target=str(decision_id))
     return result
+
+
+@router.get("/bouncers")
+def list_bouncers(
+    db: Annotated[Session, Depends(get_db)],
+    _user: Annotated[User, Depends(get_current_user)],
+) -> list[dict[str, Any]]:
+    return crowdsec_client.get_bouncers(db)
+
+
+@router.get("/machines")
+def list_machines(
+    db: Annotated[Session, Depends(get_db)],
+    _user: Annotated[User, Depends(get_current_user)],
+) -> list[dict[str, Any]]:
+    return crowdsec_client.get_machines(db)
 
 
 @router.get("/status")

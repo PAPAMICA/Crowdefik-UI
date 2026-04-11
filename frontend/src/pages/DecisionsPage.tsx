@@ -1,10 +1,28 @@
-import { Ban, ChevronLeft, ChevronRight, Clock, Filter, RefreshCw, Search, Shield, Trash2 } from 'lucide-react'
+import { Ban, ChevronLeft, ChevronRight, Clock, Download, Filter, Plus, RefreshCw, Search, Shield, ShieldBan, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { CountryFlag } from '../components/CountryFlag'
 import { IpBadge } from '../components/IpBadge'
+
+function exportCSV(rows: Decision[], filename: string) {
+  const headers = ['ID', 'IP', 'Type', 'Scenario', 'Service', 'Until']
+  const lines = rows.map((d) => [
+    d.id ?? '',
+    String(d.value ?? d.ip ?? ''),
+    d.type ?? '',
+    String(d.scenario ?? '').replace('crowdsecurity/', ''),
+    d._target_host ?? '',
+    d.until ? new Date(d.until).toISOString() : '',
+  ])
+  const csv = [headers, ...lines].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
 
 type Decision = {
   id?: number
@@ -136,6 +154,36 @@ export function DecisionsPage() {
   const [typeFilter, setTypeFilter] = useState('all')
   const [page, setPage] = useState(1)
   const [unbanning, setUnbanning] = useState<number | null>(null)
+  const [showBanForm, setShowBanForm] = useState(false)
+  const [banIp, setBanIp] = useState('')
+  const [banDuration, setBanDuration] = useState('24h')
+  const [banReason, setBanReason] = useState('manual')
+  const [banning, setBanning] = useState(false)
+  const [banMsg, setBanMsg] = useState<{ text: string; ok: boolean } | null>(null)
+
+  async function handleBan() {
+    if (!banIp.trim()) return
+    setBanning(true)
+    setBanMsg(null)
+    try {
+      const res = await apiFetch('/api/crowdsec/decisions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip: banIp.trim(), duration: banDuration, reason: banReason }),
+      })
+      if (res.ok) {
+        setBanMsg({ text: `${banIp} banned for ${banDuration}`, ok: true })
+        setBanIp('')
+        setTimeout(() => { setShowBanForm(false); setBanMsg(null) }, 1500)
+        void loadData()
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setBanMsg({ text: (err as { detail?: string }).detail ?? 'Ban failed', ok: false })
+      }
+    } finally {
+      setBanning(false)
+    }
+  }
 
   async function loadData() {
     const res = await apiFetch('/api/crowdsec/decisions?limit=2000')
@@ -196,14 +244,55 @@ export function DecisionsPage() {
             {filtered.length} of {rows.length} active decisions from CrowdSec LAPI
           </p>
         </div>
-        <button
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-          type="button"
-          onClick={() => void loadData()}
-        >
-          <RefreshCw className="h-4 w-4" /> Refresh
-        </button>
+        <div className="flex gap-2">
+          {me?.is_superuser && (
+            <button type="button" onClick={() => { setShowBanForm(!showBanForm); setBanMsg(null) }}
+              className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">
+              <Plus className="h-4 w-4" /> Ban IP
+            </button>
+          )}
+          <button type="button" onClick={() => exportCSV(filtered, `decisions-${new Date().toISOString().slice(0,10)}.csv`)}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+            <Download className="h-4 w-4" /> Export CSV
+          </button>
+          <button type="button" onClick={() => void loadData()}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Ban IP form */}
+      {showBanForm && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-500/30 dark:bg-red-900/20">
+          <div className="mb-3 flex items-center gap-2">
+            <ShieldBan className="h-4 w-4 text-red-500" />
+            <span className="text-sm font-semibold text-red-800 dark:text-red-300">Ban an IP manually</span>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <input type="text" placeholder="IP address" value={banIp} onChange={(e) => setBanIp(e.target.value)}
+              className="flex-1 min-w-[180px] rounded-xl border border-red-200 bg-white px-3 py-2 text-sm dark:border-red-500/30 dark:bg-slate-800 dark:text-slate-200" />
+            <select value={banDuration} onChange={(e) => setBanDuration(e.target.value)}
+              className="rounded-xl border border-red-200 bg-white px-3 py-2 text-sm dark:border-red-500/30 dark:bg-slate-800 dark:text-slate-200">
+              <option value="1h">1 hour</option>
+              <option value="6h">6 hours</option>
+              <option value="24h">24 hours</option>
+              <option value="72h">3 days</option>
+              <option value="168h">1 week</option>
+              <option value="720h">1 month</option>
+            </select>
+            <input type="text" placeholder="Reason" value={banReason} onChange={(e) => setBanReason(e.target.value)}
+              className="flex-1 min-w-[140px] rounded-xl border border-red-200 bg-white px-3 py-2 text-sm dark:border-red-500/30 dark:bg-slate-800 dark:text-slate-200" />
+            <button type="button" onClick={() => void handleBan()} disabled={banning || !banIp.trim()}
+              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60">
+              {banning ? 'Banning…' : 'Ban'}
+            </button>
+          </div>
+          {banMsg && (
+            <p className={`mt-2 text-xs ${banMsg.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>{banMsg.text}</p>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1 max-w-sm">

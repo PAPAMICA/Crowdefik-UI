@@ -208,6 +208,71 @@ async def fetch_metrics(db: Session) -> dict[str, Any] | None:
         return None
 
 
+# ── Add decision (manual ban) ─────────────────────────────────
+
+def add_decision(db: Session, ip: str, duration: str = "24h", reason: str = "manual", decision_type: str = "ban") -> dict[str, Any]:
+    """Add a new CrowdSec decision (manual ban). Requires watcher credentials."""
+    h = _watcher_headers(db)
+    if not h:
+        return {"ok": False, "error": "Watcher credentials required to add decisions"}
+    base = _base(db)
+    payload = {
+        "decisions": [{
+            "duration": duration,
+            "origin": "crowdefik",
+            "scenario": reason,
+            "scope": "Ip",
+            "type": decision_type,
+            "value": ip,
+        }]
+    }
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            r = client.post(f"{base}/v1/decisions", headers=h, json=payload)
+            r.raise_for_status()
+            return {"ok": True, "ip": ip, "duration": duration, "type": decision_type}
+    except httpx.HTTPStatusError as exc:
+        return {"ok": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}
+
+
+# ── Bouncers & Machines ───────────────────────────────────────
+
+def get_bouncers(db: Session) -> list[dict[str, Any]]:
+    """Fetch list of registered bouncers. Requires watcher credentials."""
+    h = _watcher_headers(db)
+    if not h:
+        return []
+    url = f"{_base(db)}/v1/bouncers"
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            r = client.get(url, headers=h)
+            r.raise_for_status()
+            data = r.json()
+            return data if isinstance(data, list) else []
+    except Exception as exc:
+        log.warning("CrowdSec bouncers fetch failed: %s", exc)
+        return []
+
+
+def get_machines(db: Session) -> list[dict[str, Any]]:
+    """Fetch list of registered machines/watchers. Requires watcher credentials."""
+    h = _watcher_headers(db)
+    if not h:
+        return []
+    url = f"{_base(db)}/v1/watchers"
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            r = client.get(url, headers=h)
+            r.raise_for_status()
+            data = r.json()
+            return data if isinstance(data, list) else []
+    except Exception as exc:
+        log.warning("CrowdSec machines fetch failed: %s", exc)
+        return []
+
+
 # ── Unban ─────────────────────────────────────────────────────
 
 def delete_decision(db: Session, decision_id: int) -> dict[str, Any]:

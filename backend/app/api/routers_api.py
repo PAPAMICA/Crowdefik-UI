@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import allowed_router_names, ensure_router_allowed, get_current_user
 from app.core import cache as cache_mod
+from app.core.audit import log_action
 from app.db import get_db
 from app.integrations import traefik_client
 from app.integrations.instance_settings import get_or_create_instance_settings
@@ -167,6 +168,7 @@ def bulk_crowdsec(
         ok += 1
 
     cache_mod.invalidate_prefix("traefik:")
+    log_action(db, user, f"crowdsec_bulk_{body.action}", detail=f"applied={ok} skipped={skipped}")
     return {"ok": True, "action": body.action, "applied": ok, "skipped": skipped}
 
 
@@ -221,6 +223,7 @@ def set_crowdsec(
         remove_override(settings, router_name)
 
     cache_mod.invalidate_prefix("traefik:")
+    log_action(db, user, f"crowdsec_{body.action}", target=router_name)
 
     from app.integrations.traefik_override import is_crowdsec_enabled_on_router
     label_has = is_crowdsec_enabled_on_router(match.get("middlewares") or [], settings.crowdsec_middleware)

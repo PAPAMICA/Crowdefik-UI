@@ -1,16 +1,20 @@
 import {
   Activity,
+  Bot,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   GanttChartSquare,
   LayoutDashboard,
   LogOut,
+  Route,
   Settings,
   Shield,
   ShieldAlert,
+  User,
   Users,
 } from 'lucide-react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, Link } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { useTheme } from '../theme'
 
@@ -21,9 +25,15 @@ const NAV = [
   { to: '/decisions', icon: Shield, label: 'Decisions', color: 'text-red-500' },
 ]
 
+const INFRA_NAV = [
+  { to: '/traefik', icon: Route, label: 'Traefik', color: 'text-cyan-500' },
+  { to: '/crowdsec', icon: Bot, label: 'CrowdSec', color: 'text-emerald-500' },
+]
+
 const ADMIN_NAV = [
   { to: '/settings', icon: Settings, label: 'Settings', color: 'text-slate-400' },
-  { to: '/admin', icon: Users, label: 'Admin', color: 'text-indigo-500' },
+  { to: '/admin', icon: Users, label: 'Users', color: 'text-indigo-500' },
+  { to: '/audit', icon: ClipboardList, label: 'Audit log', color: 'text-orange-500' },
 ]
 
 type Props = { collapsed: boolean; onToggle: () => void }
@@ -72,6 +82,19 @@ export function Sidebar({ collapsed, onToggle }: Props) {
           ))}
         </div>
 
+        {/* Infrastructure section — visible to all */}
+        <div className={['mt-4 mb-2 px-3 text-[10px] uppercase tracking-widest text-slate-500', collapsed ? 'text-center' : ''].join(' ')}>
+          {collapsed ? '···' : 'Infrastructure'}
+        </div>
+        <div className="space-y-1">
+          {INFRA_NAV.map(({ to, icon: Icon, label, color }) => (
+            <NavLink key={to} to={to} className={linkClass} title={collapsed ? label : undefined}>
+              <Icon className={`h-4 w-4 shrink-0 ${color}`} />
+              {!collapsed && <span>{label}</span>}
+            </NavLink>
+          ))}
+        </div>
+
         {me?.is_superuser && (
           <>
             <div className={['mt-4 mb-2 px-3 text-[10px] uppercase tracking-widest text-slate-500', collapsed ? 'text-center' : ''].join(' ')}>
@@ -112,14 +135,15 @@ export function Sidebar({ collapsed, onToggle }: Props) {
 
         {/* User */}
         <div className={['flex items-center gap-2', collapsed ? 'justify-center' : ''].join(' ')}>
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 text-[11px] font-bold text-white">
-            {me?.username?.[0]?.toUpperCase()}
-          </div>
+          <Link to="/profile" title={collapsed ? 'Profile' : undefined}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 text-[11px] font-bold text-white hover:ring-2 hover:ring-violet-400/50 transition">
+            {me?.username?.[0]?.toUpperCase() ?? <User className="h-3.5 w-3.5" />}
+          </Link>
           {!collapsed && (
-            <div className="min-w-0 flex-1">
+            <Link to="/profile" className="min-w-0 flex-1 hover:opacity-80 transition">
               <div className="truncate text-xs font-medium text-white">{me?.username}</div>
               <div className="text-[10px] text-slate-400">{me?.is_superuser ? 'Admin' : 'User'}</div>
-            </div>
+            </Link>
           )}
           {!collapsed && (
             <button type="button" onClick={logout} className="text-slate-400 hover:text-white transition" title="Logout">

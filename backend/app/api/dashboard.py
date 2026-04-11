@@ -83,11 +83,13 @@ def summary(
 def timeline(
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
+    days: int = 7,
 ) -> list[dict[str, Any]]:
-    """Alert counts per day for the last 7 days (from stored DB data)."""
+    """Alert counts per day for the last N days (from stored DB data)."""
+    days = max(1, min(days, 90))
     today = date.today()
     result = []
-    for i in range(6, -1, -1):
+    for i in range(days - 1, -1, -1):
         day = today - timedelta(days=i)
         start = datetime(day.year, day.month, day.day, 0, 0, 0)
         end = start + timedelta(days=1)
@@ -110,9 +112,11 @@ def timeline(
 def geo_points(
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
+    days: int = 7,
 ) -> list[dict[str, Any]]:
-    """Geolocated attacker IPs from stored alerts (last 7 days)."""
-    cutoff = datetime.utcnow() - timedelta(days=7)
+    """Geolocated attacker IPs from stored alerts (last N days)."""
+    days = max(1, min(days, 90))
+    cutoff = datetime.utcnow() - timedelta(days=days)
     q = db.query(StoredAlert).filter(
         StoredAlert.synced_at >= cutoff,
         StoredAlert.source_ip.isnot(None),
@@ -152,12 +156,14 @@ def geo_points(
 def service_stats(
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
+    days: int = 7,
 ) -> dict[str, Any]:
     """
-    Per-service breakdown of alerts (last 7 days) and correlated decisions.
+    Per-service breakdown of alerts (last N days) and correlated decisions.
     Uses target_host extracted from CrowdSec alert events' http_host metadata.
     """
-    cutoff = datetime.utcnow() - timedelta(days=7)
+    days = max(1, min(days, 90))
+    cutoff = datetime.utcnow() - timedelta(days=days)
 
     # ── Alerts per service ───────────────────────────────────
     alert_q = (

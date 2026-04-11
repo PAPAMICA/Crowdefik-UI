@@ -31,6 +31,12 @@ const CARD_CONFIG = [
 
 const CHART_COLORS = ['#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#06b6d4', '#6366f1', '#a855f7']
 
+const PERIOD_OPTIONS = [
+  { label: '24h', days: 1 },
+  { label: '7d', days: 7 },
+  { label: '30d', days: 30 },
+]
+
 export function DashboardPage() {
   const { me, loading } = useAuth()
   const [summary, setSummary] = useState<Summary | null>(null)
@@ -39,24 +45,25 @@ export function DashboardPage() {
   const [serviceStats, setServiceStats] = useState<ServiceStat[]>([])
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
+  const [days, setDays] = useState(7)
 
   useEffect(() => {
     void apiFetch('/api/dashboard/summary').then(async (r) => {
       if (r.ok) setSummary((await r.json()) as Summary)
     })
-    void apiFetch('/api/dashboard/geo').then(async (r) => {
+    void apiFetch(`/api/dashboard/geo?days=${days}`).then(async (r) => {
       if (r.ok) setGeo((await r.json()) as GeoPoint[])
     })
-    void apiFetch('/api/dashboard/timeline').then(async (r) => {
+    void apiFetch(`/api/dashboard/timeline?days=${days}`).then(async (r) => {
       if (r.ok) setTimeline((await r.json()) as TimelinePoint[])
     })
-    void apiFetch('/api/dashboard/service-stats').then(async (r) => {
+    void apiFetch(`/api/dashboard/service-stats?days=${days}`).then(async (r) => {
       if (r.ok) {
         const data = await r.json() as { by_service: ServiceStat[] }
         setServiceStats(data.by_service ?? [])
       }
     })
-  }, [])
+  }, [days])
 
   useEffect(() => {
     const token = getToken()
@@ -87,7 +94,7 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Security dashboard</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -95,6 +102,19 @@ export function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Period selector */}
+          <div className="flex rounded-xl border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-800">
+            {PERIOD_OPTIONS.map(({ label, days: d }) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setDays(d)}
+                className={`rounded-lg px-3 py-1 text-xs font-medium transition ${days === d ? 'bg-violet-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800">
             <Wifi className={`h-3 w-3 ${wsStatus === 'connected' ? 'text-emerald-500' : 'text-slate-400'}`} />
             <span className={wsStatus === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}>
