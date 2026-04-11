@@ -7,6 +7,11 @@ from app.api.deps import allowed_router_names, get_current_user
 from app.core import cache as cache_mod
 from app.db import get_db
 from app.integrations import crowdsec_client, traefik_client
+from app.integrations.instance_settings import (
+    crowdsec_api_key_plain,
+    crowdsec_machine_password_plain,
+    get_or_create_instance_settings,
+)
 from app.models import User
 from app.services.routers_view import build_router_rows, filter_rows_for_user
 from app.services.scope_filter import blob_matches_hosts, hosts_from_rules
@@ -88,6 +93,28 @@ def unban_decision(
     # Invalidate cache so the decision list refreshes
     cache_mod.invalidate_prefix("crowdsec:")
     return result
+
+
+@router.get("/status")
+def crowdsec_status(
+    db: Annotated[Session, Depends(get_db)],
+    _user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Return connectivity / auth status for CrowdSec (no external calls, just checks configuration)."""
+    s = get_or_create_instance_settings(db)
+
+    bouncer_ok = bool(crowdsec_api_key_plain(db))
+
+    machine_id = getattr(s, "crowdsec_machine_id", None) or None
+    machine_pass = crowdsec_machine_password_plain(db) if machine_id else None
+    watcher_configured = bool(machine_id and machine_pass)
+
+    return {
+        "bouncer_configured": bouncer_ok,
+        "watcher_configured": watcher_configured,
+        "machine_id": machine_id,
+        "lapi_url": s.crowdsec_lapi_url,
+    }
 
 
 @router.get("/alerts")

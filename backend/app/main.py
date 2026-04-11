@@ -18,8 +18,10 @@ SYNC_INTERVAL_SECONDS = 300  # 5 minutes
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    # Run raw-SQL migrations FIRST (before SQLAlchemy ORM touches any table)
+    # so that all columns exist by the time create_all / model queries run.
     _run_migrations()
+    Base.metadata.create_all(bind=engine)
     _bootstrap_admin_if_needed()
     # Background CrowdSec → DB sync
     task = asyncio.create_task(_sync_loop())
@@ -74,18 +76,30 @@ _MIGRATIONS: list[tuple[str, str]] = [
 
 
 def _run_migrations() -> None:
-    import logging
-
-    log = logging.getLogger(__name__)
-    with engine.connect() as conn:
-        for check_sql, alter_sql in _MIGRATIONS:
-            try:
-                conn.exec_driver_sql(check_sql)
-            except Exception:
-                # Column missing → apply migration
-                log.info("Applying migration: %s", alter_sql)
-                conn.exec_driver_sql(alter_sql)
-                conn.commit()
+    """
+    Apply each migration independently so a failure on one never blocks the others.
+    Each migration is: try the check query; if it fails (column/table absent) run the ALTER.
+    Both the check and the alter are individually try/excepted so the loop always completes.
+    """
+    log.info("Running %d DB migration checks…", len(_MIGRATIONS))
+    for check_sql, alter_sql in _MIGRATIONS:
+        # Use a fresh connection per migration so a failed transaction doesn't
+        # leave the connection in an error state for subsequent migrations.
+        try:
+            with engine.connect() as conn:
+                try:
+                    conn.exec_driver_sql(check_sql)
+                    # Check passed → column already exists, nothing to do.
+                except Exception:
+                    try:
+                        log.info("Applying migration: %s", alter_sql)
+                        conn.exec_driver_sql(alter_sql)
+                        conn.commit()
+                        log.info("Migration applied OK: %s", alter_sql)
+                    except Exception as alter_exc:
+                        log.warning("Migration ALTER failed (will retry on next start): %s — %s", alter_sql, alter_exc)
+        except Exception as conn_exc:
+            log.warning("Migration connection error for '%s': %s", alter_sql, conn_exc)
 
 
 def _bootstrap_admin_if_needed() -> None:

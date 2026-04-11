@@ -119,17 +119,23 @@ def fetch_decisions_sync(db: Session) -> list[dict[str, Any]]:
 
 # ── Alerts (requires watcher JWT) ────────────────────────────
 
-def fetch_alerts_sync(db: Session) -> list[dict[str, Any]]:
+def fetch_alerts_sync(db: Session, since_hours: int = 168) -> list[dict[str, Any]]:
+    """Fetch alerts from CrowdSec LAPI (requires watcher/machine credentials).
+
+    Args:
+        since_hours: Fetch alerts from the last N hours (default 168 = 7 days).
+    """
     # Try watcher JWT first
     h = _watcher_headers(db)
     if not h:
-        # Fall back to bouncer key — will 401 on most LAPI installs, logged at debug
+        # Fall back to bouncer key — will 401 on most LAPI installs
         h = _bouncer_headers(db)
     if not h:
         return []
-    url = f"{_base(db)}/v1/alerts"
+    # CrowdSec LAPI `since` param accepts Go duration strings like "168h"
+    url = f"{_base(db)}/v1/alerts?since={since_hours}h&limit=2000"
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=15.0) as client:
             r = client.get(url, headers=h)
             if r.status_code == 401:
                 log.warning(
@@ -163,7 +169,7 @@ async def fetch_decisions(db: Session) -> list[dict[str, Any]]:
         return []
 
 
-async def fetch_alerts(db: Session) -> list[dict[str, Any]]:
+async def fetch_alerts(db: Session, since_hours: int = 168) -> list[dict[str, Any]]:
     import asyncio
     # JWT refresh is synchronous; run in thread to avoid blocking event loop
     h = await asyncio.to_thread(_watcher_headers, db)
@@ -171,9 +177,9 @@ async def fetch_alerts(db: Session) -> list[dict[str, Any]]:
         h = _bouncer_headers(db)
     if not h:
         return []
-    url = f"{_base(db)}/v1/alerts"
+    url = f"{_base(db)}/v1/alerts?since={since_hours}h&limit=2000"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.get(url, headers=h)
             if r.status_code == 401:
                 return []

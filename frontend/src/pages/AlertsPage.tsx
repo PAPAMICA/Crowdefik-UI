@@ -1,10 +1,17 @@
-import { AlertTriangle, Filter, RefreshCw, Search } from 'lucide-react'
+import { AlertTriangle, Filter, Info, RefreshCw, Search, Settings } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, Link } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { CountryFlag } from '../components/CountryFlag'
 import { IpBadge } from '../components/IpBadge'
+
+type CrowdsecStatus = {
+  bouncer_configured: boolean
+  watcher_configured: boolean
+  machine_id: string | null
+  lapi_url: string
+}
 
 type Alert = {
   id?: number
@@ -85,14 +92,19 @@ function Pagination({ page, total, pageSize, onChange }: { page: number; total: 
 export function AlertsPage() {
   const { me, loading } = useAuth()
   const [rows, setRows] = useState<Alert[]>([])
+  const [csStatus, setCsStatus] = useState<CrowdsecStatus | null>(null)
   const [search, setSearch] = useState('')
   const [scenarioFilter, setScenarioFilter] = useState('all')
   const [serviceFilter, setServiceFilter] = useState('all')
   const [page, setPage] = useState(1)
 
   async function loadData() {
-    const res = await apiFetch('/api/crowdsec/alerts?limit=2000')
-    if (res.ok) setRows((await res.json()) as Alert[])
+    const [alertsRes, statusRes] = await Promise.all([
+      apiFetch('/api/crowdsec/alerts?limit=2000'),
+      apiFetch('/api/crowdsec/status'),
+    ])
+    if (alertsRes.ok) setRows((await alertsRes.json()) as Alert[])
+    if (statusRes.ok) setCsStatus((await statusRes.json()) as CrowdsecStatus)
   }
 
   useEffect(() => { void loadData() }, [])
@@ -142,6 +154,29 @@ export function AlertsPage() {
           <RefreshCw className="h-4 w-4" /> Refresh
         </button>
       </div>
+
+      {/* Machine credentials warning */}
+      {csStatus && !csStatus.watcher_configured && (
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm dark:border-amber-500/30 dark:bg-amber-900/20">
+          <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+          <div className="flex-1 text-amber-800 dark:text-amber-300">
+            <p className="font-semibold">Credentials machine CrowdSec manquants</p>
+            <p className="mt-0.5 text-xs">
+              Les alertes nécessitent une authentification <em>watcher</em> (machine), pas la clé bouncer.
+              Créez un compte machine et configurez-le dans les paramètres&nbsp;:
+            </p>
+            <pre className="mt-1.5 rounded-lg bg-amber-100/60 px-3 py-2 font-mono text-[11px] dark:bg-amber-900/40">
+              {`docker exec crowdsec cscli machines add crowdefik --password <mot_de_passe>`}
+            </pre>
+            <Link
+              to="/settings"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
+            >
+              <Settings className="h-3 w-3" /> Configurer dans les paramètres
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
