@@ -7,7 +7,6 @@ import {
 } from 'recharts'
 import { apiFetch, getToken, wsDashboardUrl } from '../api'
 import { useAuth } from '../auth'
-import { CountryFlag } from '../components/CountryFlag'
 import { IpBadge } from '../components/IpBadge'
 
 const AttackerMap = lazy(() => import('../components/AttackerMap').then((m) => ({ default: m.AttackerMap })))
@@ -49,7 +48,6 @@ export function DashboardPage() {
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [days, setDays] = useState(7)
-  const [selectedIp, setSelectedIp] = useState<string | null>(null)
 
   useEffect(() => {
     void apiFetch('/api/dashboard/summary').then(async (r) => {
@@ -204,11 +202,10 @@ export function DashboardPage() {
           <div className="mb-2 flex items-center gap-2">
             <Shield className="h-4 w-4 text-red-500" />
             <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Top attacker IPs</span>
-            <span className="ml-auto text-[11px] text-slate-400">click for details</span>
           </div>
           {(summary?.top_attacker_ips ?? []).length ? (
-            <div className="flex items-center gap-2">
-              <ResponsiveContainer width={160} height={220}>
+            <div className="flex items-center gap-3">
+              <ResponsiveContainer width={150} height={220}>
                 <PieChart>
                   <Pie
                     data={summary!.top_attacker_ips.slice(0, 8)}
@@ -217,10 +214,8 @@ export function DashboardPage() {
                     cx="50%"
                     cy="50%"
                     innerRadius={48}
-                    outerRadius={72}
+                    outerRadius={68}
                     paddingAngle={2}
-                    cursor="pointer"
-                    onClick={(d) => { const ip = (d as unknown as AttackerIp).ip; if (ip) setSelectedIp(ip) }}
                   >
                     {summary!.top_attacker_ips.slice(0, 8).map((_, i) => (
                       <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -233,22 +228,14 @@ export function DashboardPage() {
                   />
                 </PieChart>
               </ResponsiveContainer>
-              {/* Legend */}
-              <div className="flex-1 min-w-0 space-y-1">
+              {/* Legend — utilise IpBadge pour flag + score + modal */}
+              <div className="flex-1 min-w-0 space-y-2">
                 {summary!.top_attacker_ips.slice(0, 8).map((item, i) => (
-                  <button
-                    key={item.ip}
-                    type="button"
-                    onClick={() => setSelectedIp(item.ip)}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-700/40 transition"
-                  >
+                  <div key={item.ip} className="flex items-center gap-2">
                     <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
-                    {item.country_code
-                      ? <CountryFlag code={item.country_code} size={14} className="flex-shrink-0" />
-                      : <span className="h-[14px] w-5 flex-shrink-0" />}
-                    <span className="min-w-0 flex-1 truncate font-mono text-slate-700 dark:text-slate-200" title={item.ip}>{item.ip}</span>
-                    <span className="flex-shrink-0 font-semibold text-slate-600 dark:text-slate-300">{item.count}</span>
-                  </button>
+                    <span className="flex-shrink-0 w-4 text-center text-[10px] font-bold text-slate-400">{item.count}</span>
+                    <IpBadge ip={item.ip} />
+                  </div>
                 ))}
               </div>
             </div>
@@ -257,20 +244,6 @@ export function DashboardPage() {
           )}
         </div>
       </div>
-
-      {/* IP detail modal — rendered inline, triggered by click */}
-      {selectedIp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-          onClick={() => setSelectedIp(null)}>
-          <div className="relative rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-800 w-full max-w-sm mx-4"
-            onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setSelectedIp(null)}
-              className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
-            <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Détails de l'IP</p>
-            <IpBadge ip={selectedIp} />
-          </div>
-        </div>
-      )}
 
       {/* Attacks by service */}
       {serviceStats.length > 0 && (

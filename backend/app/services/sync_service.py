@@ -233,9 +233,22 @@ def cleanup_old(db: Session) -> int:
 
 
 def backfill_target_hosts(db: Session) -> int:
-    """One-time backfill: parse raw_json of stored alerts that have no target_host yet."""
+    """
+    Backfill target_host for stored alerts that have none yet.
+
+    Two passes:
+    1. Fast path: re-parse raw_json (works for Traefik log-based alerts).
+    2. Traefik log correlation: for WAF/AppSec direct alerts (kind=waf) whose
+       context doesn't include the Host header, correlate by attacker IP +
+       timestamp against the Traefik access.log.
+    """
     rows = db.query(StoredAlert).filter(StoredAlert.target_host.is_(None)).all()
+    if not rows:
+        return 0
+
     updated = 0
+    still_missing: list[StoredAlert] = []
+
     for row in rows:
         try:
             data = json.loads(row.raw_json)
@@ -243,10 +256,73 @@ def backfill_target_hosts(db: Session) -> int:
             if host:
                 row.target_host = host
                 updated += 1
+            else:
+                still_missing.append(row)
         except Exception:
-            pass
+            still_missing.append(row)
+
     if updated:
         db.commit()
+
+    if still_missing:
+        updated += _backfill_from_traefik_log(db, still_missing)
+
+    return updated
+
+
+def _backfill_from_traefik_log(db: Session, rows: list[StoredAlert]) -> int:
+    """
+    Correlate WAF alerts (no target_host) against the Traefik access.log.
+
+    Requires CROWDEFIK_TRAEFIK_LOG_PATH to be set and the log file to be
+    accessible inside the container (read-only volume mount).
+    """
+    from app.settings import get_settings
+
+    log_path = get_settings().traefik_log_path
+    if not log_path:
+        return 0
+
+    try:
+        from app.integrations.traefik_log_reader import build_ip_host_index, find_host_for_alert
+        index = build_ip_host_index(log_path)
+    except Exception as exc:
+        log.warning("Traefik log correlation failed: %s", exc)
+        return 0
+
+    if not index:
+        return 0
+
+    updated = 0
+    for row in rows:
+        if not row.source_ip or not row.start_at:
+            continue
+
+        # Extract target_uri from the alert's raw context for better path matching
+        target_uri: str | None = None
+        try:
+            data = json.loads(row.raw_json)
+            for c in (data.get("context") or []):
+                if isinstance(c, dict) and c.get("key") == "target_uri":
+                    target_uri = c.get("value")
+                    break
+        except Exception:
+            pass
+
+        host = find_host_for_alert(
+            index,
+            source_ip=row.source_ip,
+            alert_time=row.start_at,
+            target_uri=target_uri,
+        )
+        if host:
+            row.target_host = host
+            updated += 1
+
+    if updated:
+        db.commit()
+        log.info("Traefik log correlation: enriched %d WAF alerts with target host", updated)
+
     return updated
 
 
