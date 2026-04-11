@@ -21,6 +21,8 @@ def _row_to_out(row) -> InstanceSettingsOut:
         has_traefik_basic_password=bool(row.traefik_basic_password_enc),
         has_crowdsec_api_key=bool(row.crowdsec_api_key_enc),
         has_abuseipdb_api_key=bool(row.abuseipdb_api_key_enc),
+        crowdsec_machine_id=row.crowdsec_machine_id or None,
+        has_crowdsec_machine_password=bool(row.crowdsec_machine_pass_enc),
     )
 
 
@@ -51,6 +53,13 @@ def put_settings_api(
         row.crowdsec_api_key_enc = crypto.encrypt_str(body.crowdsec_api_key) if body.crowdsec_api_key else None
     if body.abuseipdb_api_key is not None:
         row.abuseipdb_api_key_enc = crypto.encrypt_str(body.abuseipdb_api_key) if body.abuseipdb_api_key else None
+    if body.crowdsec_machine_id is not None:
+        row.crowdsec_machine_id = body.crowdsec_machine_id or None
+    if body.crowdsec_machine_password is not None:
+        row.crowdsec_machine_pass_enc = crypto.encrypt_str(body.crowdsec_machine_password) if body.crowdsec_machine_password else None
+        # Invalidate JWT so next request forces fresh login
+        from app.integrations.crowdsec_client import invalidate_jwt_cache
+        invalidate_jwt_cache(db)
     db.add(row)
     db.commit()
     db.refresh(row)

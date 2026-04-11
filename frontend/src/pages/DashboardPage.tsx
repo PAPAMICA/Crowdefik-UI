@@ -20,6 +20,7 @@ type Summary = {
 }
 type GeoPoint = { ip: string; lat: number; lon: number; count: number; scenario: string; country: string }
 type TimelinePoint = { date: string; count: number }
+type ServiceStat = { host: string; alert_count: number; unique_ips: number; favicon: string | null }
 
 const CARD_CONFIG = [
   { key: 'routers_total' as const, label: 'Exposed routers', icon: Activity, color: 'bg-violet-500/10 text-violet-500', border: 'border-violet-500/20' },
@@ -35,6 +36,7 @@ export function DashboardPage() {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [geo, setGeo] = useState<GeoPoint[]>([])
   const [timeline, setTimeline] = useState<TimelinePoint[]>([])
+  const [serviceStats, setServiceStats] = useState<ServiceStat[]>([])
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
 
@@ -47,6 +49,12 @@ export function DashboardPage() {
     })
     void apiFetch('/api/dashboard/timeline').then(async (r) => {
       if (r.ok) setTimeline((await r.json()) as TimelinePoint[])
+    })
+    void apiFetch('/api/dashboard/service-stats').then(async (r) => {
+      if (r.ok) {
+        const data = await r.json() as { by_service: ServiceStat[] }
+        setServiceStats(data.by_service ?? [])
+      }
     })
   }, [])
 
@@ -176,6 +184,55 @@ export function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Attacks by service */}
+      {serviceStats.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+          <div className="mb-4 flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 text-violet-500" />
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Attacks by service — last 7 days</span>
+          </div>
+          <div className="grid gap-2">
+            {serviceStats.map((s) => {
+              const max = serviceStats[0]?.alert_count || 1
+              const pct = Math.max(4, Math.round((s.alert_count / max) * 100))
+              return (
+                <div key={s.host} className="flex items-center gap-3">
+                  {/* Favicon */}
+                  <img
+                    src={s.favicon ?? `https://icons.duckduckgo.com/ip3/${s.host}.ico`}
+                    alt=""
+                    width={16}
+                    height={16}
+                    className="h-4 w-4 flex-shrink-0 rounded-sm object-contain"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }}
+                  />
+                  {/* Host */}
+                  <span className="w-44 flex-shrink-0 truncate font-mono text-xs text-slate-600 dark:text-slate-300" title={s.host}>
+                    {s.host}
+                  </span>
+                  {/* Bar */}
+                  <div className="flex-1 rounded-full bg-slate-100 dark:bg-slate-700/60" style={{ height: 8 }}>
+                    <div
+                      className="h-2 rounded-full bg-violet-500"
+                      style={{ width: `${pct}%`, transition: 'width 0.4s ease' }}
+                    />
+                  </div>
+                  {/* Stats */}
+                  <div className="flex flex-shrink-0 items-center gap-3 text-right">
+                    <span className="w-16 text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      {s.alert_count.toLocaleString()} alerts
+                    </span>
+                    <span className="w-14 text-[10px] text-slate-400">
+                      {s.unique_ips} IPs
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Alert timeline */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">

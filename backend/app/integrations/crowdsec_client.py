@@ -1,27 +1,108 @@
+"""
+CrowdSec LAPI client.
+
+Two authentication modes:
+  - Bouncer API key  (X-Api-Key)  → /v1/decisions only
+  - Watcher JWT      (Bearer)     → /v1/alerts + /v1/decisions
+
+If machine credentials are configured, alerts use the watcher JWT.
+If only the bouncer key is set, alerts are unavailable (LAPI returns 401).
+"""
 import logging
+import threading
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
 from sqlalchemy.orm import Session
 
-from app.integrations.instance_settings import crowdsec_api_key_plain, get_or_create_instance_settings
+from app.integrations.instance_settings import (
+    crowdsec_api_key_plain,
+    crowdsec_machine_password_plain,
+    get_or_create_instance_settings,
+)
 
 log = logging.getLogger(__name__)
 
-
-def _headers(db: Session) -> dict[str, str] | None:
-    key = crowdsec_api_key_plain(db)
-    if not key:
-        return None
-    return {"X-Api-Key": key}
+# ── JWT cache (module-level, thread-safe) ─────────────────────
+_jwt_lock = threading.Lock()
+_jwt_cache: dict[str, tuple[str, datetime]] = {}   # key → (token, expires_at)
+_JWT_BUFFER_SECONDS = 60   # renew this many seconds before expiry
 
 
 def _base(db: Session) -> str:
     return get_or_create_instance_settings(db).crowdsec_lapi_url.rstrip("/")
 
 
+def _bouncer_headers(db: Session) -> dict[str, str] | None:
+    key = crowdsec_api_key_plain(db)
+    if not key:
+        return None
+    return {"X-Api-Key": key}
+
+
+# ── Watcher (machine) JWT ─────────────────────────────────────
+
+def _watcher_jwt(db: Session) -> str | None:
+    """Return a valid watcher JWT, refreshing if needed. Returns None if not configured."""
+    s = get_or_create_instance_settings(db)
+    machine_id = s.crowdsec_machine_id or ""
+    password = crowdsec_machine_password_plain(db) or ""
+    if not machine_id or not password:
+        return None
+
+    cache_key = f"{_base(db)}|{machine_id}"
+    with _jwt_lock:
+        cached = _jwt_cache.get(cache_key)
+        if cached:
+            token, expires_at = cached
+            if datetime.utcnow() < expires_at - timedelta(seconds=_JWT_BUFFER_SECONDS):
+                return token
+
+    # Authenticate
+    url = f"{_base(db)}/v1/watchers/login"
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            r = client.post(url, json={"machine_id": machine_id, "password": password})
+            r.raise_for_status()
+            data = r.json()
+            token = data.get("token") or data.get("access_token")
+            expire_str = data.get("expire")
+            if expire_str:
+                try:
+                    expires_at = datetime.fromisoformat(expire_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                except Exception:
+                    expires_at = datetime.utcnow() + timedelta(hours=1)
+            else:
+                expires_at = datetime.utcnow() + timedelta(hours=1)
+
+            with _jwt_lock:
+                _jwt_cache[cache_key] = (token, expires_at)
+            log.info("CrowdSec watcher JWT obtained (expires %s)", expires_at)
+            return token
+    except Exception as exc:
+        log.warning("CrowdSec watcher login failed (%s): %s", url, exc)
+        return None
+
+
+def _watcher_headers(db: Session) -> dict[str, str] | None:
+    token = _watcher_jwt(db)
+    if not token:
+        return None
+    return {"Authorization": f"Bearer {token}"}
+
+
+def invalidate_jwt_cache(db: Session) -> None:
+    s = get_or_create_instance_settings(db)
+    cache_key = f"{_base(db)}|{s.crowdsec_machine_id or ''}"
+    with _jwt_lock:
+        _jwt_cache.pop(cache_key, None)
+
+
+# ── Decisions (bouncer key is enough) ────────────────────────
+
 def fetch_decisions_sync(db: Session) -> list[dict[str, Any]]:
-    h = _headers(db)
+    h = _bouncer_headers(db)
     if not h:
         return []
     url = f"{_base(db)}/v1/decisions"
@@ -36,14 +117,26 @@ def fetch_decisions_sync(db: Session) -> list[dict[str, Any]]:
         return []
 
 
+# ── Alerts (requires watcher JWT) ────────────────────────────
+
 def fetch_alerts_sync(db: Session) -> list[dict[str, Any]]:
-    h = _headers(db)
+    # Try watcher JWT first
+    h = _watcher_headers(db)
+    if not h:
+        # Fall back to bouncer key — will 401 on most LAPI installs, logged at debug
+        h = _bouncer_headers(db)
     if not h:
         return []
     url = f"{_base(db)}/v1/alerts"
     try:
         with httpx.Client(timeout=10.0) as client:
             r = client.get(url, headers=h)
+            if r.status_code == 401:
+                log.warning(
+                    "CrowdSec alerts 401 — bouncer keys cannot read alerts. "
+                    "Add machine credentials in Crowdefik Settings to enable alert access."
+                )
+                return []
             r.raise_for_status()
             data = r.json()
             return data if isinstance(data, list) else []
@@ -52,8 +145,10 @@ def fetch_alerts_sync(db: Session) -> list[dict[str, Any]]:
         return []
 
 
+# ── Async variants (used by WebSocket) ───────────────────────
+
 async def fetch_decisions(db: Session) -> list[dict[str, Any]]:
-    h = _headers(db)
+    h = _bouncer_headers(db)
     if not h:
         return []
     url = f"{_base(db)}/v1/decisions"
@@ -69,13 +164,19 @@ async def fetch_decisions(db: Session) -> list[dict[str, Any]]:
 
 
 async def fetch_alerts(db: Session) -> list[dict[str, Any]]:
-    h = _headers(db)
+    import asyncio
+    # JWT refresh is synchronous; run in thread to avoid blocking event loop
+    h = await asyncio.to_thread(_watcher_headers, db)
+    if not h:
+        h = _bouncer_headers(db)
     if not h:
         return []
     url = f"{_base(db)}/v1/alerts"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(url, headers=h)
+            if r.status_code == 401:
+                return []
             r.raise_for_status()
             data = r.json()
             return data if isinstance(data, list) else []
@@ -85,7 +186,7 @@ async def fetch_alerts(db: Session) -> list[dict[str, Any]]:
 
 
 async def fetch_metrics(db: Session) -> dict[str, Any] | None:
-    h = _headers(db)
+    h = _bouncer_headers(db)
     if not h:
         return None
     url = f"{_base(db)}/v1/metrics"
@@ -101,9 +202,11 @@ async def fetch_metrics(db: Session) -> dict[str, Any] | None:
         return None
 
 
+# ── Unban ─────────────────────────────────────────────────────
+
 def delete_decision(db: Session, decision_id: int) -> dict[str, Any]:
     """Delete (unban) a decision by its CrowdSec ID."""
-    h = _headers(db)
+    h = _bouncer_headers(db)
     base = _base(db)
     if not h:
         return {"ok": False, "error": "No API key configured"}
@@ -118,9 +221,11 @@ def delete_decision(db: Session, decision_id: int) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)[:300]}
 
 
+# ── Connection test ───────────────────────────────────────────
+
 def test_connection(db: Session) -> dict[str, Any]:
     """Check LAPI reachability + API key validity."""
-    h = _headers(db)
+    h = _bouncer_headers(db)
     base = _base(db)
     if not h:
         return {"ok": False, "url": base, "error": "No API key configured"}
@@ -133,6 +238,27 @@ def test_connection(db: Session) -> dict[str, Any]:
                 return {"ok": True, "url": base, "active_decisions": count}
             r.raise_for_status()
             return {"ok": True, "url": base}
+    except httpx.HTTPStatusError as exc:
+        return {"ok": False, "url": base, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"}
+    except Exception as exc:
+        return {"ok": False, "url": base, "error": str(exc)[:300]}
+
+
+def test_watcher_connection(db: Session) -> dict[str, Any]:
+    """Test machine/watcher credentials by fetching alerts."""
+    base = _base(db)
+    s = get_or_create_instance_settings(db)
+    if not s.crowdsec_machine_id:
+        return {"ok": False, "url": base, "error": "No machine ID configured"}
+    invalidate_jwt_cache(db)   # force fresh login
+    h = _watcher_headers(db)
+    if not h:
+        return {"ok": False, "url": base, "error": "Authentication failed — check machine ID and password"}
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            r = client.get(f"{base}/v1/alerts?limit=1", headers=h)
+            r.raise_for_status()
+            return {"ok": True, "url": base, "machine_id": s.crowdsec_machine_id}
     except httpx.HTTPStatusError as exc:
         return {"ok": False, "url": base, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"}
     except Exception as exc:

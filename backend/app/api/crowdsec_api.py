@@ -42,9 +42,35 @@ def list_decisions(
 
     decisions = cache_mod.get_cached("crowdsec:decisions", factory, ttl_seconds=s.crowdsec_cache_ttl_seconds)
     hosts = _visible_hosts(db, user)
-    if hosts is None:
-        return decisions[:limit]
-    return [d for d in decisions if blob_matches_hosts(d, hosts)][:limit]
+    raw = decisions[:limit] if hosts is None else [d for d in decisions if blob_matches_hosts(d, hosts)][:limit]
+    return _enrich_decisions_with_service(db, raw)
+
+
+def _enrich_decisions_with_service(db: Session, decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add _target_host to each decision by looking up the most common alert target for that IP."""
+    from sqlalchemy import func
+    from app.models import StoredAlert
+    ips = list({str(d.get("value") or d.get("ip") or "") for d in decisions if d.get("value") or d.get("ip")})
+    if not ips:
+        return decisions
+    # For each IP, find the most common target_host in stored alerts
+    rows = (
+        db.query(StoredAlert.source_ip, StoredAlert.target_host, func.count(StoredAlert.id).label("n"))
+        .filter(StoredAlert.source_ip.in_(ips), StoredAlert.target_host.isnot(None))
+        .group_by(StoredAlert.source_ip, StoredAlert.target_host)
+        .all()
+    )
+    # Pick the top host per IP
+    from collections import defaultdict
+    ip_hosts: dict[str, dict[str, int]] = defaultdict(dict)
+    for ip, host, n in rows:
+        ip_hosts[ip][host] = n
+    top_host = {ip: max(hosts, key=hosts.__getitem__) for ip, hosts in ip_hosts.items()}
+    for d in decisions:
+        ip = str(d.get("value") or d.get("ip") or "")
+        if ip in top_host:
+            d["_target_host"] = top_host[ip]
+    return decisions
 
 
 @router.delete("/decisions/{decision_id}")
@@ -78,5 +104,17 @@ def list_alerts(
     alerts = cache_mod.get_cached("crowdsec:alerts", factory, ttl_seconds=s.crowdsec_cache_ttl_seconds)
     hosts = _visible_hosts(db, user)
     if hosts is None:
-        return alerts[:limit]
-    return [a for a in alerts if blob_matches_hosts(a, hosts)][:limit]
+        raw = alerts[:limit]
+    else:
+        raw = [a for a in alerts if blob_matches_hosts(a, hosts)][:limit]
+
+    # Enrich each alert with stored target_host
+    from app.models import StoredAlert
+    ids = [a.get("id") for a in raw if isinstance(a.get("id"), int)]
+    if ids:
+        stored = {r.id: r.target_host for r in db.query(StoredAlert).filter(StoredAlert.id.in_(ids)).all()}
+        for a in raw:
+            a_id = a.get("id")
+            if isinstance(a_id, int) and a_id in stored:
+                a["_target_host"] = stored[a_id]
+    return raw

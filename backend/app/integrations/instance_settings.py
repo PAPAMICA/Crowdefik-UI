@@ -26,3 +26,10 @@ def crowdsec_api_key_plain(db: Session) -> str | None:
     if not row.crowdsec_api_key_enc:
         return None
     return crypto.decrypt_str(row.crowdsec_api_key_enc)
+
+
+def crowdsec_machine_password_plain(db: Session) -> str | None:
+    row = get_or_create_instance_settings(db)
+    if not row.crowdsec_machine_pass_enc:
+        return None
+    return crypto.decrypt_str(row.crowdsec_machine_pass_enc)

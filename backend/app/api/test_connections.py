@@ -40,3 +40,11 @@ def test_abuseipdb(
     _: Annotated[User, Depends(require_superuser)],
 ) -> dict[str, Any]:
     return abuseipdb_client.test_connection(db)
+
+
+@router.get("/crowdsec-watcher")
+def test_crowdsec_watcher(
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    return crowdsec_client.test_watcher_connection(db)

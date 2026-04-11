@@ -36,6 +36,8 @@ class InstanceSettingsOut(BaseModel):
     has_traefik_basic_password: bool
     has_crowdsec_api_key: bool
     has_abuseipdb_api_key: bool
+    crowdsec_machine_id: str | None
+    has_crowdsec_machine_password: bool
 
 
 class InstanceSettingsUpdateIn(BaseModel):
@@ -45,6 +47,8 @@ class InstanceSettingsUpdateIn(BaseModel):
     crowdsec_lapi_url: str | None = None
     crowdsec_api_key: str | None = None
     abuseipdb_api_key: str | None = None
+    crowdsec_machine_id: str | None = None
+    crowdsec_machine_password: str | None = None
 
 
 class CrowdsecToggleIn(BaseModel):

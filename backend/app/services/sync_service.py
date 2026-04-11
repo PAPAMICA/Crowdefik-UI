@@ -28,6 +28,22 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
 
 
+def _extract_target_host(alert: dict) -> str | None:
+    """
+    Walk events[*].meta looking for the http_host key.
+    CrowdSec stores the HTTP Host header there when parsing Traefik access logs.
+    """
+    events = alert.get("events") or []
+    for event in events:
+        meta = event.get("meta") or []
+        for m in meta:
+            if isinstance(m, dict) and m.get("key") == "http_host":
+                value = str(m.get("value") or "").strip()
+                if value:
+                    return value
+    return None
+
+
 def sync_alerts(db: Session, alerts: list[dict]) -> int:
     """Upsert alerts. Returns count of new rows inserted."""
     now = datetime.utcnow()
@@ -48,6 +64,7 @@ def sync_alerts(db: Session, alerts: list[dict]) -> int:
             source_country=str(src.get("cn") or "") or None,
             source_lat=float(lat) if lat is not None else None,
             source_lon=float(lon) if lon is not None else None,
+            target_host=_extract_target_host(a),
             events_count=int(a.get("events_count") or 1),
             start_at=_parse_dt(a.get("start_at")),
             stop_at=_parse_dt(a.get("stop_at")),
@@ -169,6 +186,24 @@ def cleanup_old(db: Session) -> int:
     return n_a + n_d
 
 
+def backfill_target_hosts(db: Session) -> int:
+    """One-time backfill: parse raw_json of stored alerts that have no target_host yet."""
+    rows = db.query(StoredAlert).filter(StoredAlert.target_host.is_(None)).all()
+    updated = 0
+    for row in rows:
+        try:
+            data = json.loads(row.raw_json)
+            host = _extract_target_host(data)
+            if host:
+                row.target_host = host
+                updated += 1
+        except Exception:
+            pass
+    if updated:
+        db.commit()
+    return updated
+
+
 def run_full_sync(db: Session) -> dict:
     """Fetch from CrowdSec, store in DB, enrich geo, cleanup old. Safe to call repeatedly."""
     alerts_raw = crowdsec_client.fetch_alerts_sync(db)
@@ -177,6 +212,7 @@ def run_full_sync(db: Session) -> dict:
     new_alerts = sync_alerts(db, alerts_raw)
     new_decisions = sync_decisions(db, decisions_raw)
     geo_enriched = enrich_geo(db)
+    backfill_target_hosts(db)
     cleaned = cleanup_old(db)
 
     log.info("Sync done: +%d alerts, +%d decisions, %d IPs geolocated, %d old rows removed",

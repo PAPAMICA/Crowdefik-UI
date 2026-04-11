@@ -58,6 +58,18 @@ _MIGRATIONS: list[tuple[str, str]] = [
         "SELECT abuseipdb_api_key_enc FROM instance_settings LIMIT 1",
         "ALTER TABLE instance_settings ADD COLUMN abuseipdb_api_key_enc TEXT",
     ),
+    (
+        "SELECT crowdsec_machine_id FROM instance_settings LIMIT 1",
+        "ALTER TABLE instance_settings ADD COLUMN crowdsec_machine_id VARCHAR(256)",
+    ),
+    (
+        "SELECT crowdsec_machine_pass_enc FROM instance_settings LIMIT 1",
+        "ALTER TABLE instance_settings ADD COLUMN crowdsec_machine_pass_enc TEXT",
+    ),
+    (
+        "SELECT target_host FROM stored_alerts LIMIT 1",
+        "ALTER TABLE stored_alerts ADD COLUMN target_host VARCHAR(256)",
+    ),
 ]
 
 

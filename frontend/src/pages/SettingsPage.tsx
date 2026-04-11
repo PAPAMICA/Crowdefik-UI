@@ -11,15 +11,30 @@ type SettingsOut = {
   has_traefik_basic_password: boolean
   has_crowdsec_api_key: boolean
   has_abuseipdb_api_key: boolean
+  crowdsec_machine_id: string | null
+  has_crowdsec_machine_password: boolean
 }
-type TestResult = { ok: boolean; error?: string; version?: string | null; http_routers?: number | null; active_decisions?: number | null; api_version?: string | null; os?: string | null; arch?: string | null; test_ip?: string; abuse_score?: number; country?: string }
+type TestResult = {
+  ok: boolean; error?: string; version?: string | null; http_routers?: number | null
+  active_decisions?: number | null; api_version?: string | null; os?: string | null
+  arch?: string | null; test_ip?: string; abuse_score?: number; country?: string
+  machine_id?: string
+}
 
 function TestBadge({ result }: { result: TestResult | null | 'pending' }) {
   if (!result) return null
   if (result === 'pending')
     return <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs text-slate-500 dark:bg-slate-700"><Loader2 className="h-3 w-3 animate-spin" />Testing…</span>
   if (result.ok) {
-    const details = [result.version && `v${result.version}`, result.api_version && `API ${result.api_version}`, result.http_routers != null && `${result.http_routers} routers`, result.active_decisions != null && `${result.active_decisions} decisions`, result.abuse_score != null && `score:${result.abuse_score}`, result.os && `${result.os}/${result.arch}`].filter(Boolean).join(' · ')
+    const details = [
+      result.version && `v${result.version}`,
+      result.api_version && `API ${result.api_version}`,
+      result.http_routers != null && `${result.http_routers} routers`,
+      result.active_decisions != null && `${result.active_decisions} decisions`,
+      result.abuse_score != null && `score:${result.abuse_score}`,
+      result.machine_id && `machine: ${result.machine_id}`,
+      result.os && `${result.os}/${result.arch}`,
+    ].filter(Boolean).join(' · ')
     return <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-700 dark:text-emerald-400"><CheckCircle className="h-3 w-3" />Connected{details ? ` — ${details}` : ''}</span>
   }
   return <span className="inline-flex items-start gap-1.5 rounded-xl bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" /><span className="break-all">{result.error ?? 'Failed'}</span></span>
@@ -64,9 +79,16 @@ const inputClass = "rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 t
 export function SettingsPage() {
   const { me, loading } = useAuth()
   const [s, setS] = useState<SettingsOut | null>(null)
-  const [form, setForm] = useState({ traefik_api_url: '', traefik_basic_user: '', traefik_basic_password: '', crowdsec_lapi_url: '', crowdsec_api_key: '', abuseipdb_api_key: '' })
+  const [form, setForm] = useState({
+    traefik_api_url: '', traefik_basic_user: '', traefik_basic_password: '',
+    crowdsec_lapi_url: '', crowdsec_api_key: '',
+    crowdsec_machine_id: '', crowdsec_machine_password: '',
+    abuseipdb_api_key: '',
+  })
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
-  const [tests, setTests] = useState<Record<string, TestResult | 'pending' | null>>({ traefik: null, crowdsec: null, docker: null, abuseipdb: null })
+  const [tests, setTests] = useState<Record<string, TestResult | 'pending' | null>>({
+    traefik: null, crowdsec: null, 'crowdsec-watcher': null, docker: null, abuseipdb: null,
+  })
 
   useEffect(() => {
     void (async () => {
@@ -74,7 +96,13 @@ export function SettingsPage() {
       if (!res.ok) return
       const data = (await res.json()) as SettingsOut
       setS(data)
-      setForm((f) => ({ ...f, traefik_api_url: data.traefik_api_url, traefik_basic_user: data.traefik_basic_user ?? '', crowdsec_lapi_url: data.crowdsec_lapi_url }))
+      setForm((f) => ({
+        ...f,
+        traefik_api_url: data.traefik_api_url,
+        traefik_basic_user: data.traefik_basic_user ?? '',
+        crowdsec_lapi_url: data.crowdsec_lapi_url,
+        crowdsec_machine_id: data.crowdsec_machine_id ?? '',
+      }))
     })()
   }, [])
 
@@ -84,17 +112,23 @@ export function SettingsPage() {
   async function onSave(e: React.FormEvent) {
     e.preventDefault()
     setMsg(null)
-    const payload: Record<string, unknown> = { traefik_api_url: form.traefik_api_url, traefik_basic_user: form.traefik_basic_user || null, crowdsec_lapi_url: form.crowdsec_lapi_url }
+    const payload: Record<string, unknown> = {
+      traefik_api_url: form.traefik_api_url,
+      traefik_basic_user: form.traefik_basic_user || null,
+      crowdsec_lapi_url: form.crowdsec_lapi_url,
+      crowdsec_machine_id: form.crowdsec_machine_id || null,
+    }
     if (form.traefik_basic_password) payload.traefik_basic_password = form.traefik_basic_password
     if (form.crowdsec_api_key) payload.crowdsec_api_key = form.crowdsec_api_key
+    if (form.crowdsec_machine_password) payload.crowdsec_machine_password = form.crowdsec_machine_password
     if (form.abuseipdb_api_key) payload.abuseipdb_api_key = form.abuseipdb_api_key
     const res = await apiFetch('/api/settings', { method: 'PUT', body: JSON.stringify(payload) })
     if (!res.ok) { setMsg({ text: 'Save failed', ok: false }); return }
     const data = (await res.json()) as SettingsOut
     setS(data)
-    setForm((f) => ({ ...f, traefik_basic_password: '', crowdsec_api_key: '', abuseipdb_api_key: '' }))
+    setForm((f) => ({ ...f, traefik_basic_password: '', crowdsec_api_key: '', crowdsec_machine_password: '', abuseipdb_api_key: '' }))
     setMsg({ text: 'Settings saved', ok: true })
-    setTests({ traefik: null, crowdsec: null, docker: null, abuseipdb: null })
+    setTests({ traefik: null, crowdsec: null, 'crowdsec-watcher': null, docker: null, abuseipdb: null })
   }
 
   async function runTest(name: string) {
@@ -141,24 +175,67 @@ export function SettingsPage() {
           </Field>
         </Section>
 
-        {/* CrowdSec */}
+        {/* CrowdSec — Bouncer key */}
         <Section
-          title="CrowdSec LAPI"
-          description="Local API for decisions and alerts"
+          title="CrowdSec — Bouncer key"
+          description="Required for decisions (ban list) and WAF middleware"
           onTest={() => void runTest('crowdsec')}
           testResult={tests.crowdsec}
           note={
-            <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-xs text-blue-700 dark:text-blue-300">
-              Create an API key: <code className="ml-1 font-mono">docker exec crowdsec cscli bouncers add crowdefik-bouncer</code>
+            <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-xs text-blue-700 dark:text-blue-300 space-y-1">
+              <p><strong>Bouncer key</strong> — gives access to <code>/v1/decisions</code> only.</p>
+              <p>Create it: <code className="font-mono">docker exec crowdsec cscli bouncers add crowdefik-bouncer</code></p>
             </div>
           }
         >
           <Field label="LAPI URL">
             <input className={inputClass} value={form.crowdsec_lapi_url} placeholder="http://crowdsec:8080" onChange={(e) => setForm({ ...form, crowdsec_lapi_url: e.target.value })} />
           </Field>
-          <Field label="API Key">
-            <input className={inputClass} type="password" value={form.crowdsec_api_key} placeholder={s?.has_crowdsec_api_key ? '(unchanged)' : 'Enter API key'} onChange={(e) => setForm({ ...form, crowdsec_api_key: e.target.value })} />
+          <Field label="Bouncer API Key">
+            <input className={inputClass} type="password" value={form.crowdsec_api_key} placeholder={s?.has_crowdsec_api_key ? '(unchanged)' : 'Enter bouncer API key'} onChange={(e) => setForm({ ...form, crowdsec_api_key: e.target.value })} />
           </Field>
+        </Section>
+
+        {/* CrowdSec — Machine credentials */}
+        <Section
+          title="CrowdSec — Machine credentials"
+          description="Required for alerts — bouncer keys cannot access /v1/alerts"
+          onTest={() => void runTest('crowdsec-watcher')}
+          testResult={tests['crowdsec-watcher']}
+          note={
+            <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 px-4 py-3 text-xs text-violet-700 dark:text-violet-300 space-y-2">
+              <p>
+                <strong>Why?</strong> CrowdSec LAPI restricts <code>/v1/alerts</code> to <em>watchers</em> (machines), not bouncers.
+                Without this, the Alerts page will be empty.
+              </p>
+              <p>Create a machine and get its password:</p>
+              <pre className="rounded-lg bg-violet-500/10 px-3 py-2 font-mono leading-relaxed whitespace-pre-wrap">
+{`docker exec crowdsec cscli machines add crowdefik \\
+  --password YOUR_PASSWORD --force`}
+              </pre>
+              <p>Then enter the same <code>crowdefik</code> and <code>YOUR_PASSWORD</code> below.</p>
+            </div>
+          }
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Machine ID">
+              <input
+                className={inputClass}
+                value={form.crowdsec_machine_id}
+                placeholder={s?.crowdsec_machine_id ?? 'e.g. crowdefik'}
+                onChange={(e) => setForm({ ...form, crowdsec_machine_id: e.target.value })}
+              />
+            </Field>
+            <Field label="Machine password">
+              <input
+                className={inputClass}
+                type="password"
+                value={form.crowdsec_machine_password}
+                placeholder={s?.has_crowdsec_machine_password ? '(unchanged)' : 'Enter machine password'}
+                onChange={(e) => setForm({ ...form, crowdsec_machine_password: e.target.value })}
+              />
+            </Field>
+          </div>
         </Section>
 
         {/* AbuseIPDB */}

@@ -44,6 +44,9 @@ class InstanceSettings(Base):
     crowdsec_lapi_url = mapped_column(String(512), default="http://crowdsec:8080", nullable=False)
     crowdsec_api_key_enc = mapped_column(Text, nullable=True)
     abuseipdb_api_key_enc = mapped_column(Text, nullable=True)
+    # CrowdSec machine/watcher credentials (needed for /v1/alerts — bouncer key only allows /v1/decisions)
+    crowdsec_machine_id = mapped_column(String(256), nullable=True)
+    crowdsec_machine_pass_enc = mapped_column(Text, nullable=True)
     updated_at = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
@@ -60,6 +63,8 @@ class StoredAlert(Base):
     source_country = mapped_column(String(8), nullable=True)
     source_lat = mapped_column(Float, nullable=True)
     source_lon = mapped_column(Float, nullable=True)
+    # Target service extracted from events[*].meta http_host
+    target_host = mapped_column(String(256), nullable=True, index=True)
     events_count = mapped_column(Integer, default=1, nullable=False)
     start_at = mapped_column(DateTime, nullable=True, index=True)
     stop_at = mapped_column(DateTime, nullable=True)

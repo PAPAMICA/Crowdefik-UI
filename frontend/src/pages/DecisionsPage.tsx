@@ -17,6 +17,7 @@ type Decision = {
   scenario?: string
   reason?: string
   origin?: string
+  _target_host?: string
   [k: string]: unknown
 }
 
@@ -235,6 +236,7 @@ export function DecisionsPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">IP</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Type</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Scenario</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Service ciblé</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Until</th>
                 <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-400">Actions</th>
               </tr>
@@ -264,6 +266,19 @@ export function DecisionsPage() {
                       <ScenarioBadge scenario={scenario} />
                     </td>
                     <td className="px-4 py-3">
+                      {d._target_host ? (
+                        <a
+                          href={`https://${d._target_host}`} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300"
+                        >
+                          <img src={`https://icons.duckduckgo.com/ip3/${d._target_host}.ico`} alt="" width={12} height={12}
+                            className="h-3 w-3 rounded-sm object-contain"
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                          {d._target_host}
+                        </a>
+                      ) : <span className="text-xs text-slate-400">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
                       <div className="flex flex-col gap-0.5">
                         {until && (
                           <span className="text-xs text-slate-700 dark:text-slate-300">{until}</span>
@@ -277,7 +292,8 @@ export function DecisionsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end">
-                        {me?.is_superuser && decisionId !== null && (
+                        {/* align colSpan */}
+                    {me?.is_superuser && decisionId !== null && (
                           <button
                             type="button"
                             disabled={unbanning === decisionId}
@@ -295,7 +311,7 @@ export function DecisionsPage() {
               })}
               {!paged.length && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-sm text-slate-400">
+                  <td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-400">
                     {rows.length ? 'No decisions match filters' : 'No active decisions — check CrowdSec settings'}
                   </td>
                 </tr>
