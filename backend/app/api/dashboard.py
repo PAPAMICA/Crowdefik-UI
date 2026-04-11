@@ -16,9 +16,18 @@ from app.services.scope_filter import hosts_from_rules
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 SUMMARY_DAYS = 7
+# Dashboard data comes from the local DB; 5-minute cache is a good balance
+# between freshness (sync runs every 5 min) and avoiding repeated queries.
+_DASHBOARD_TTL = 300
 
 
 def _visible_rows(db: Session, user: User):
+    """Return router rows visible to *user*, always from cache.
+
+    If the Traefik cache is cold, we attempt a fresh fetch but cap the wait
+    at the traefik_client timeout (2–8 s) before falling back to an empty list
+    — so the dashboard never hangs waiting for Traefik.
+    """
     def traefik_factory():
         return traefik_client.fetch_routers_sync(db)
 
@@ -97,11 +106,10 @@ def summary(
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, Any]:
-    # Cache per user to avoid repeated Traefik API + DB queries (60 s TTL).
     return cache_mod.get_cached(
         f"dashboard:summary:{user.id}",
         lambda: compute_dashboard_summary(db, user),
-        ttl_seconds=60,
+        ttl_seconds=_DASHBOARD_TTL,
     )
 
 
@@ -164,7 +172,7 @@ def timeline(
             result.append({'date': label, 'alerts': alert_map.get(key, 0), 'blocked': blocked_map.get(key, 0)})
         return result
 
-    return cache_mod.get_cached(f"dashboard:timeline:{user.id}:{days}", _build, ttl_seconds=60)
+    return cache_mod.get_cached(f"dashboard:timeline:{user.id}:{days}", _build, ttl_seconds=_DASHBOARD_TTL)
 
 
 @router.get("/geo")
@@ -249,7 +257,7 @@ def service_stats(
             s["unique_ips"] = ip_map.get(s["host"], 0)
         return {"by_service": alerts_by_service}
 
-    return cache_mod.get_cached(f"dashboard:service-stats:{user.id}:{days}", _build, ttl_seconds=60)
+    return cache_mod.get_cached(f"dashboard:service-stats:{user.id}:{days}", _build, ttl_seconds=_DASHBOARD_TTL)
 
 
 @router.post("/sync")

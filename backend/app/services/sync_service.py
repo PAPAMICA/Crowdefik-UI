@@ -308,8 +308,8 @@ def _backfill_from_traefik_log(db: Session, rows: list[StoredAlert]) -> int:
     index: dict = {}
     if log_path:
         try:
-            from app.integrations.traefik_log_reader import build_ip_host_index
-            index = build_ip_host_index(log_path)
+            from app.integrations.traefik_log_reader import get_cached_index
+            index = get_cached_index(log_path)
         except Exception as exc:
             log.warning("Traefik log correlation failed: %s", exc)
 
@@ -351,6 +351,27 @@ def _backfill_from_traefik_log(db: Session, rows: list[StoredAlert]) -> int:
     return updated
 
 
+def _warm_traefik_cache(db: Session) -> None:
+    """Refresh the Traefik router cache in the background so dashboard calls never block.
+
+    The cache TTL is 2 hours; we refresh it every sync cycle (5 min) so it is
+    always hot when the dashboard needs it.  Errors are silently swallowed —
+    the dashboard will just show 0 routers until Traefik is reachable.
+    """
+    from app.core import cache as cache_mod
+    from app.integrations import traefik_client
+
+    try:
+        routers = traefik_client.fetch_routers_sync(db)
+        cache_mod._store["traefik:routers"] = (
+            __import__("time").monotonic() + 2 * 60 * 60,  # 2-hour TTL
+            routers,
+        )
+        log.debug("Traefik router cache warmed: %d routers", len(routers))
+    except Exception as exc:
+        log.debug("Traefik cache warm skipped: %s", exc)
+
+
 def run_full_sync(db: Session) -> dict:
     """Fetch from CrowdSec, store in DB, enrich geo, cleanup old. Safe to call repeatedly."""
     alerts_raw = crowdsec_client.fetch_alerts_sync(db)
@@ -361,6 +382,10 @@ def run_full_sync(db: Session) -> dict:
     geo_enriched = enrich_geo(db)
     backfill_target_hosts(db)
     cleaned = cleanup_old(db)
+
+    # Keep the Traefik router cache hot so dashboard endpoints never have to
+    # wait for a live Traefik API call when serving user requests.
+    _warm_traefik_cache(db)
 
     log.info("Sync done: +%d alerts, +%d decisions, %d IPs geolocated, %d old rows removed",
              new_alerts, new_decisions, geo_enriched, cleaned)

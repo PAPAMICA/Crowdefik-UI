@@ -6,9 +6,10 @@ Three log sources:
   GET /api/logs/traefik   — Traefik application log (text/structured lines)
   GET /api/logs/crowdsec  — CrowdSec log (via docker exec or mounted file)
 
-All endpoints support:
-  minutes (int, default 20): only return entries from the last N minutes.
-                              Pass 0 to disable the time filter.
+All endpoints share these query params:
+  lines  (int, default 1000): how many raw lines to tail before filtering.
+                               Increase to look further back in history.
+  minutes (int, default 0):   additional time-window filter (0 = disabled).
 """
 import json as _json
 import logging
@@ -29,22 +30,10 @@ from app.settings import get_settings
 router = APIRouter(prefix="/logs", tags=["logs"])
 log = logging.getLogger(__name__)
 
-_MAX_TAIL = 50_000
-_DEFAULT_LIMIT = 500
-_DEFAULT_MINUTES = 20
-
-# Conservative upper bound on log lines per minute for adaptive tail sizing.
-# Access logs can be dense; app logs are sparse — we use the higher value and
-# cap at _MAX_TAIL so "All" mode never reads more than 50 k lines.
-_LINES_PER_MINUTE_ACCESS = 300   # up to 300 req/min
-_LINES_PER_MINUTE_APP    = 100   # traefik/crowdsec app logs
-
-
-def _adaptive_tail(minutes: int, lines_per_minute: int, minimum: int = 2_000) -> int:
-    """Return how many lines to tail given a time window."""
-    if minutes <= 0:
-        return _MAX_TAIL
-    return min(_MAX_TAIL, max(minimum, minutes * lines_per_minute))
+_DEFAULT_LIMIT   = 200
+_DEFAULT_LINES   = 1_000
+_MAX_LINES       = 50_000
+_DEFAULT_MINUTES = 0   # disabled by default — lines-based is the primary control
 
 
 # ── time helpers ──────────────────────────────────────────────────────────────
@@ -61,7 +50,6 @@ def _parse_log_time(t: str) -> datetime | None:
         return dt
     except ValueError:
         pass
-    # Try common logfmt variants without timezone
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
         try:
             return datetime.strptime(t[:len(fmt)], fmt).replace(tzinfo=timezone.utc)
@@ -80,6 +68,7 @@ def _cutoff(minutes: int) -> datetime | None:
 
 def _tail(path: Path, n: int) -> list[str]:
     """Read last *n* lines from *path* efficiently."""
+    n = max(1, min(n, _MAX_LINES))
     try:
         with path.open("rb") as fh:
             fh.seek(0, 2)
@@ -106,7 +95,7 @@ def _docker_exec(container: str, cmd: list[str]) -> list[str]:
     try:
         result = subprocess.run(
             ["docker", "exec", container] + cmd,
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, timeout=15
         )
         return result.stdout.splitlines()
     except Exception as exc:
@@ -115,7 +104,6 @@ def _docker_exec(container: str, cmd: list[str]) -> list[str]:
 
 
 def _get_container_name(db: Session, field: str, default: str) -> str:
-    """Read a container name from InstanceSettings, falling back to *default*."""
     from app.integrations.instance_settings import get_or_create_instance_settings
     row = get_or_create_instance_settings(db)
     return getattr(row, field, None) or default
@@ -127,6 +115,7 @@ def _get_container_name(db: Session, field: str, default: str) -> str:
 def access_logs(
     db: Annotated[Session, Depends(get_db)],
     _user: Annotated[User, Depends(get_current_user)],
+    lines: int = _DEFAULT_LINES,
     limit: int = _DEFAULT_LIMIT,
     page: int = 1,
     minutes: int = _DEFAULT_MINUTES,
@@ -134,13 +123,12 @@ def access_logs(
     search: str | None = None,
     status: str | None = None,
 ) -> dict[str, Any]:
-    """Traefik JSON access log — filterable, paginated, time-windowed."""
+    """Traefik JSON access log — filterable, paginated."""
     s = get_settings()
     if not s.traefik_log_path or not s.traefik_log_path.exists():
-        return {"available": False, "total": 0, "entries": [], "minutes": minutes}
+        return {"available": False, "total": 0, "entries": [], "lines": lines}
 
-    n_lines = _adaptive_tail(minutes, _LINES_PER_MINUTE_ACCESS)
-    raw_lines = _tail(s.traefik_log_path, n_lines)
+    raw_lines = _tail(s.traefik_log_path, lines)
     entries: list[dict[str, Any]] = []
 
     search_lc = search.lower() if search else None
@@ -163,9 +151,7 @@ def access_logs(
         if cut:
             dt = _parse_log_time(time_str)
             if dt and dt < cut:
-                # Log is reversed (newest first); once we see an entry older than
-                # the cutoff, all following entries will be older too.
-                break
+                break  # reversed order: older entries follow — stop early
 
         if host_lc and entry_host != host_lc:
             continue
@@ -200,12 +186,12 @@ def access_logs(
         "total": total,
         "page": page,
         "pages": -(-total // limit),
-        "minutes": minutes,
+        "lines": lines,
         "entries": paged,
     }
 
 
-# ── generic structured-log parser & endpoint factory ─────────────────────────
+# ── generic structured-log parser & filter ────────────────────────────────────
 
 _LOG_RE = re.compile(
     r'time="(?P<time>[^"]+)".*level=(?P<level>\w+)\s+msg="(?P<msg>[^"]*)"'
@@ -213,7 +199,6 @@ _LOG_RE = re.compile(
 
 
 def _parse_log_line(line: str) -> dict[str, str] | None:
-    """Parse a single Traefik/CrowdSec log line (JSON or logfmt)."""
     if line.startswith("{"):
         try:
             d = _json.loads(line)
@@ -253,7 +238,7 @@ def _filter_log_entries(
         if cut:
             dt = _parse_log_time(parsed["time"])
             if dt and dt < cut:
-                break  # older than window — stop (reversed order)
+                break  # reversed order — older entries follow, stop
         if level_lc and parsed["level"] != level_lc:
             continue
         if search_lc and search_lc not in parsed["msg"].lower() and search_lc not in parsed["raw"].lower():
@@ -268,6 +253,7 @@ def _filter_log_entries(
 def traefik_logs(
     db: Annotated[Session, Depends(get_db)],
     _user: Annotated[User, Depends(get_current_user)],
+    lines: int = _DEFAULT_LINES,
     limit: int = _DEFAULT_LIMIT,
     page: int = 1,
     minutes: int = _DEFAULT_MINUTES,
@@ -276,18 +262,15 @@ def traefik_logs(
 ) -> dict[str, Any]:
     """Traefik application log — file or docker exec fallback."""
     s = get_settings()
-
     raw_lines: list[str] = []
     source = "unavailable"
-    n_lines = _adaptive_tail(minutes, _LINES_PER_MINUTE_APP)
 
     if s.traefik_app_log_path and s.traefik_app_log_path.exists():
-        raw_lines = _tail(s.traefik_app_log_path, n_lines)
+        raw_lines = _tail(s.traefik_app_log_path, lines)
         source = "file"
     else:
-        # Fallback: docker exec into the Traefik container
         container = _get_container_name(db, "traefik_container_name", "traefik")
-        docker_n = str(min(n_lines, 5000))
+        docker_n = str(min(lines, 5000))
         raw_lines = _docker_exec(container, ["tail", "-n", docker_n, "/var/log/traefik/traefik.log"])
         if not raw_lines:
             raw_lines = _docker_exec(container, ["tail", "-n", docker_n, "/var/log/traefik.log"])
@@ -297,7 +280,7 @@ def traefik_logs(
             source = "docker"
 
     if not raw_lines:
-        return {"available": False, "total": 0, "entries": [], "minutes": minutes, "source": source}
+        return {"available": False, "total": 0, "entries": [], "lines": lines, "source": source}
 
     entries = _filter_log_entries(
         raw_lines,
@@ -314,7 +297,7 @@ def traefik_logs(
         "total": total,
         "page": page,
         "pages": -(-total // limit),
-        "minutes": minutes,
+        "lines": lines,
         "source": source,
         "entries": paged,
     }
@@ -326,6 +309,7 @@ def traefik_logs(
 def crowdsec_logs(
     db: Annotated[Session, Depends(get_db)],
     _user: Annotated[User, Depends(get_current_user)],
+    lines: int = _DEFAULT_LINES,
     limit: int = _DEFAULT_LIMIT,
     page: int = 1,
     minutes: int = _DEFAULT_MINUTES,
@@ -334,17 +318,15 @@ def crowdsec_logs(
 ) -> dict[str, Any]:
     """CrowdSec log — read from mounted file or via docker exec."""
     s = get_settings()
-
     raw_lines: list[str] = []
     source = "unavailable"
-    n_lines = _adaptive_tail(minutes, _LINES_PER_MINUTE_APP)
 
     if s.crowdsec_log_path and s.crowdsec_log_path.exists():
-        raw_lines = _tail(s.crowdsec_log_path, n_lines)
+        raw_lines = _tail(s.crowdsec_log_path, lines)
         source = "file"
     else:
         container = _get_container_name(db, "crowdsec_container_name", "crowdsec")
-        docker_n = str(min(n_lines, 5000))
+        docker_n = str(min(lines, 5000))
         raw_lines = _docker_exec(container, ["tail", "-n", docker_n, "/var/log/crowdsec/crowdsec.log"])
         if not raw_lines:
             raw_lines = _docker_exec(container, ["tail", "-n", docker_n, "/var/log/crowdsec.log"])
@@ -352,7 +334,7 @@ def crowdsec_logs(
             source = "docker"
 
     if not raw_lines:
-        return {"available": False, "total": 0, "entries": [], "minutes": minutes, "source": source}
+        return {"available": False, "total": 0, "entries": [], "lines": lines, "source": source}
 
     entries = _filter_log_entries(
         raw_lines,
@@ -369,7 +351,7 @@ def crowdsec_logs(
         "total": total,
         "page": page,
         "pages": -(-total // limit),
-        "minutes": minutes,
+        "lines": lines,
         "source": source,
         "entries": paged,
     }

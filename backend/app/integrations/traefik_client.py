@@ -8,6 +8,11 @@ from app.integrations.instance_settings import get_or_create_instance_settings, 
 
 log = logging.getLogger(__name__)
 
+# Aggressive timeouts so a slow/unreachable Traefik never blocks the dashboard.
+# connect=2s: fail fast if the TCP handshake doesn't complete (unreachable host).
+# read=6s:    allow a bit more time once connected (large router lists).
+_TIMEOUT = httpx.Timeout(connect=2.0, read=6.0, write=5.0, pool=1.0)
+
 
 def _auth(db: Session) -> tuple[str, str] | None:
     row = get_or_create_instance_settings(db)
@@ -26,7 +31,7 @@ def fetch_routers_sync(db: Session) -> list[dict[str, Any]]:
     auth = _auth(db)
     url = f"{_base(db)}/api/http/routers"
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=_TIMEOUT) as client:
             r = client.get(url, auth=auth)
             r.raise_for_status()
             return r.json()
@@ -39,7 +44,7 @@ def fetch_middlewares_sync(db: Session) -> list[dict[str, Any]]:
     auth = _auth(db)
     url = f"{_base(db)}/api/http/middlewares"
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=_TIMEOUT) as client:
             r = client.get(url, auth=auth)
             r.raise_for_status()
             return r.json()
@@ -52,7 +57,7 @@ async def fetch_routers(db: Session) -> list[dict[str, Any]]:
     auth = _auth(db)
     url = f"{_base(db)}/api/http/routers"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             r = await client.get(url, auth=auth)
             r.raise_for_status()
             return r.json()
@@ -66,7 +71,7 @@ def fetch_overview_sync(db: Session) -> dict[str, Any]:
     base = _base(db)
     result: dict[str, Any] = {"version": None, "http": {}, "tcp": {}, "udp": {}, "features": []}
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=_TIMEOUT) as client:
             r = client.get(f"{base}/api/overview", auth=auth)
             if r.status_code == 200:
                 result.update(r.json())
@@ -82,7 +87,7 @@ def fetch_entrypoints_sync(db: Session) -> list[dict[str, Any]]:
     auth = _auth(db)
     url = f"{_base(db)}/api/entrypoints"
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=_TIMEOUT) as client:
             r = client.get(url, auth=auth)
             r.raise_for_status()
             return r.json()
@@ -95,7 +100,7 @@ def fetch_services_sync(db: Session) -> list[dict[str, Any]]:
     auth = _auth(db)
     url = f"{_base(db)}/api/http/services"
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=_TIMEOUT) as client:
             r = client.get(url, auth=auth)
             r.raise_for_status()
             return r.json()
@@ -163,7 +168,7 @@ def test_connection(db: Session) -> dict[str, Any]:
     auth = _auth(db)
     base = _base(db)
     try:
-        with httpx.Client(timeout=8.0) as client:
+        with httpx.Client(timeout=_TIMEOUT) as client:
             # Try /api/overview first (v2/v3); fall back to /api/http/routers
             r = client.get(f"{base}/api/overview", auth=auth)
             if r.status_code == 200:

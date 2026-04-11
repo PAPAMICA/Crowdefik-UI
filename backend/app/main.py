@@ -84,6 +84,30 @@ _MIGRATIONS: list[tuple[str, str]] = [
         "SELECT traefik_container_name FROM instance_settings LIMIT 1",
         "ALTER TABLE instance_settings ADD COLUMN traefik_container_name VARCHAR(256) DEFAULT 'traefik'",
     ),
+    (
+        "SELECT abuse_score FROM ip_geo_cache LIMIT 1",
+        "ALTER TABLE ip_geo_cache ADD COLUMN abuse_score INTEGER",
+    ),
+    (
+        "SELECT abuse_total_reports FROM ip_geo_cache LIMIT 1",
+        "ALTER TABLE ip_geo_cache ADD COLUMN abuse_total_reports INTEGER",
+    ),
+    (
+        "SELECT abuse_is_tor FROM ip_geo_cache LIMIT 1",
+        "ALTER TABLE ip_geo_cache ADD COLUMN abuse_is_tor BOOLEAN",
+    ),
+    (
+        "SELECT abuse_last_reported_at FROM ip_geo_cache LIMIT 1",
+        "ALTER TABLE ip_geo_cache ADD COLUMN abuse_last_reported_at VARCHAR(64)",
+    ),
+    (
+        "SELECT abuse_domain FROM ip_geo_cache LIMIT 1",
+        "ALTER TABLE ip_geo_cache ADD COLUMN abuse_domain VARCHAR(256)",
+    ),
+    (
+        "SELECT abuse_updated_at FROM ip_geo_cache LIMIT 1",
+        "ALTER TABLE ip_geo_cache ADD COLUMN abuse_updated_at DATETIME",
+    ),
 ]
 
 

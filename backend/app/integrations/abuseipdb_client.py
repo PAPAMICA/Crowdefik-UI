@@ -28,7 +28,7 @@ def check_ip(db: Session, ip: str) -> dict[str, Any] | None:
     if not key:
         return None
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=httpx.Timeout(connect=3.0, read=6.0, write=5.0, pool=1.0)) as client:
             r = client.get(
                 f"{ABUSEIPDB_URL}/check",
                 params={"ipAddress": ip, "maxAgeInDays": 90},

@@ -7,6 +7,8 @@ find the virtual host that was targeted, by matching the attacker IP and timesta
 """
 import json
 import logging
+import time
+import threading
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -19,6 +21,37 @@ log = logging.getLogger(__name__)
 TAIL_LINES = 50_000
 # Only keep log entries from the last N hours (WAF alerts are synced quickly).
 LOOKBACK_HOURS = 24
+
+# ── Index cache ───────────────────────────────────────────────────────────────
+# The index is expensive to build (parse 50k lines). Cache it for INDEX_TTL
+# seconds so that interactive "enrich" button clicks reuse the same index
+# instead of re-reading the file on every request.
+
+_INDEX_TTL = 60  # seconds
+_index_cache: dict[str, tuple[float, dict]] = {}  # path → (built_at, index)
+_index_lock = threading.Lock()
+
+
+def get_cached_index(log_path: Path) -> dict[str, list[dict[str, Any]]]:
+    """Return a cached IP→entries index, rebuilding it if older than INDEX_TTL."""
+    key = str(log_path)
+    now = time.monotonic()
+    with _index_lock:
+        if key in _index_cache:
+            built_at, cached = _index_cache[key]
+            if now - built_at < _INDEX_TTL:
+                return cached
+    # Build outside the lock so we don't block other threads during I/O
+    fresh = build_ip_host_index(log_path)
+    with _index_lock:
+        _index_cache[key] = (now, fresh)
+    return fresh
+
+
+def invalidate_index_cache() -> None:
+    """Force a rebuild on the next call (e.g. after a manual sync)."""
+    with _index_lock:
+        _index_cache.clear()
 
 
 def _tail_file(path: Path, n: int) -> list[str]:

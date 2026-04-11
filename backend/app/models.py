@@ -93,9 +93,10 @@ class StoredDecision(Base):
 
 
 class IpGeoCache(Base):
-    """Persistent geolocation cache so ip-api.com is not called repeatedly."""
+    """Persistent cache for geolocation (ip-api.com) and abuse score (AbuseIPDB)."""
     __tablename__ = "ip_geo_cache"
     ip = mapped_column(String(64), primary_key=True)
+    # Geolocation — ip-api.com
     lat = mapped_column(Float, nullable=True)
     lon = mapped_column(Float, nullable=True)
     country_code = mapped_column(String(8), nullable=True)
@@ -103,6 +104,13 @@ class IpGeoCache(Base):
     city = mapped_column(String(128), nullable=True)
     isp = mapped_column(String(256), nullable=True)
     updated_at = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    # AbuseIPDB — stored alongside geo to avoid repeated external calls
+    abuse_score = mapped_column(Integer, nullable=True)
+    abuse_total_reports = mapped_column(Integer, nullable=True)
+    abuse_is_tor = mapped_column(Boolean, nullable=True)
+    abuse_last_reported_at = mapped_column(String(64), nullable=True)
+    abuse_domain = mapped_column(String(256), nullable=True)
+    abuse_updated_at = mapped_column(DateTime, nullable=True)
 
 
 class AuditLog(Base):

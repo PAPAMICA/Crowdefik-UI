@@ -350,27 +350,53 @@ def enrich_alert(
     """Force target_host discovery for a single alert via Traefik log correlation."""
     from app.models import StoredAlert
     from app.services.sync_service import _backfill_from_traefik_log, _extract_target_host
+    from app.settings import get_settings
 
     row = db.query(StoredAlert).filter(StoredAlert.id == alert_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Alert not found")
 
-    # Try cheap in-memory extraction first
+    # 1. Try cheap in-memory extraction from raw alert JSON first
     try:
         raw = _json.loads(row.raw_json)
     except Exception:
         raw = {}
     host = _extract_target_host(raw)
 
-    if not host:
-        # Force Traefik log correlation by resetting the flag
-        row.log_enrichment_attempted = False
-        db.commit()
-        _backfill_from_traefik_log(db, [row])
-        db.refresh(row)
-        host = row.target_host
-    else:
+    if host:
         row.target_host = host
         db.commit()
+        return {"id": str(alert_id), "target_host": host}
+
+    # 2. Traefik log correlation — only possible when the log file is mounted
+    s = get_settings()
+    if not s.traefik_log_path or not s.traefik_log_path.exists():
+        # Log not available: mark as attempted so the button doesn't keep spinning
+        row.log_enrichment_attempted = True
+        db.commit()
+        return {"id": str(alert_id), "target_host": None}
+
+    # 3. Use the cached index (built at most once every 60 s) to avoid
+    #    re-reading 50 k lines of access.log on every button click.
+    from app.integrations.traefik_log_reader import get_cached_index, find_host_for_alert
+    from datetime import datetime as _dt
+
+    index = get_cached_index(s.traefik_log_path)
+
+    target_uri: str | None = None
+    try:
+        for c in (raw.get("context") or []):
+            if isinstance(c, dict) and c.get("key") == "target_uri":
+                target_uri = c.get("value")
+                break
+    except Exception:
+        pass
+
+    alert_time = row.start_at or _dt.utcnow()
+    host = find_host_for_alert(index, row.source_ip or "", alert_time, target_uri)
+
+    row.target_host = host
+    row.log_enrichment_attempted = True
+    db.commit()
 
     return {"id": str(alert_id), "target_host": host}

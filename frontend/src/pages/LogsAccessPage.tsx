@@ -1,10 +1,10 @@
-import { Clock, Download, Filter, RefreshCw, Search, Server } from 'lucide-react'
+import { Download, Filter, RefreshCw, Search, Server } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
+import { LinePicker } from '../components/LinePicker'
 import { Skeleton } from '../components/Skeleton'
-import { TimeRangePicker } from '../components/TimeRangePicker'
 import { usePagePerf } from '../hooks/usePagePerf'
 
 type Entry = {
@@ -12,10 +12,9 @@ type Entry = {
   status: number | null; client_ip: string | null; duration_ms: number
   bytes: number | null; router: string | null; tls_version: string | null
 }
+type Data = { available: boolean; total: number; page: number; pages: number; lines: number; entries: Entry[] }
 
-type Data = { available: boolean; total: number; page: number; pages: number; minutes: number; entries: Entry[] }
-
-const PAGE_SIZE = 100
+const PAGE_SIZE = 200
 
 function statusColor(code: number | null) {
   if (!code) return 'text-slate-400'
@@ -30,7 +29,7 @@ export function LogsAccessPage() {
   const [data, setData] = useState<Data | null>(null)
   const [fetching, setFetching] = useState(true)
   usePagePerf('Logs / Access', fetching)
-  const [minutes, setMinutes] = useState(20)
+  const [lines, setLines] = useState(1_000)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -42,15 +41,16 @@ export function LogsAccessPage() {
     return () => clearTimeout(t)
   }, [search])
 
-  useEffect(() => { setPage(1) }, [debouncedSearch, hostFilter, statusFilter, minutes])
+  // Reset to page 1 whenever any filter or line count changes
+  useEffect(() => { setPage(1) }, [debouncedSearch, hostFilter, statusFilter, lines])
 
   const buildParams = useCallback(() => {
-    const p = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE), minutes: String(minutes) })
+    const p = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE), lines: String(lines) })
     if (debouncedSearch) p.set('search', debouncedSearch)
     if (hostFilter) p.set('host', hostFilter)
     if (statusFilter) p.set('status', statusFilter)
     return p
-  }, [page, debouncedSearch, hostFilter, statusFilter, minutes])
+  }, [page, debouncedSearch, hostFilter, statusFilter, lines])
 
   async function load() {
     setFetching(true)
@@ -60,7 +60,7 @@ export function LogsAccessPage() {
     } finally { setFetching(false) }
   }
 
-  useEffect(() => { void load() }, [page, debouncedSearch, hostFilter, statusFilter, minutes]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void load() }, [page, debouncedSearch, hostFilter, statusFilter, lines]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function exportCSV() {
     if (!data?.entries) return
@@ -75,26 +75,28 @@ export function LogsAccessPage() {
 
   if (!loading && !me) return <Navigate to="/login" replace />
 
-  const rangeLabel = minutes === 0 ? 'all time' : minutes < 60 ? `last ${minutes} min` : minutes < 1440 ? `last ${minutes / 60}h` : 'last 24h'
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Access logs</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Traefik JSON access log — {fetching ? '…' : data?.total?.toLocaleString() ?? '0'} entries ({rangeLabel})
+            Traefik JSON access log
+            {data && !fetching && (
+              <> — <strong className="text-slate-700 dark:text-slate-300">{data.total.toLocaleString()}</strong> matching entries out of last {lines.toLocaleString()} lines</>
+            )}
+            {fetching && ' — loading…'}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <TimeRangePicker value={minutes} onChange={(m) => setMinutes(m)} />
+          <LinePicker value={lines} onChange={(n) => setLines(n)} />
           <button type="button" onClick={exportCSV}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-            <Download className="h-4 w-4" /> Export CSV
+            <Download className="h-4 w-4" /> Export
           </button>
           <button type="button" onClick={() => void load()}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-            <RefreshCw className={`h-4 w-4 ${fetching ? 'animate-spin' : ''}`} /> Refresh
+            <RefreshCw className={`h-4 w-4 ${fetching ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
@@ -103,15 +105,21 @@ export function LogsAccessPage() {
       <div className="flex flex-wrap gap-3">
         <div className="relative min-w-[200px] flex-1 max-w-xs">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-            placeholder="Path, IP, host…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input
+            className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            placeholder="Path, IP, host…" value={search} onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-slate-400" />
-          <input className="w-40 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-            placeholder="Host filter…" value={hostFilter} onChange={(e) => setHostFilter(e.target.value)} />
-          <select className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-            value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <input
+            className="w-40 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            placeholder="Host filter…" value={hostFilter} onChange={(e) => setHostFilter(e.target.value)}
+          />
+          <select
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+          >
             <option value="">All status</option>
             {['2xx', '3xx', '4xx', '5xx'].map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
@@ -128,66 +136,58 @@ export function LogsAccessPage() {
             </p>
           </div>
         ) : (
-          <>
-            {/* Time window banner */}
-            {data && minutes > 0 && (
-              <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2 text-xs text-slate-500 dark:border-slate-700/50 dark:bg-slate-800/40">
-                <Clock className="h-3.5 w-3.5 text-violet-400" />
-                Showing entries from the <strong className="text-slate-700 dark:text-slate-300">last {minutes < 60 ? `${minutes} minutes` : `${minutes / 60} hour${minutes > 60 ? 's' : ''}`}</strong>.
-                <button type="button" className="ml-1 text-violet-500 hover:underline" onClick={() => setMinutes(0)}>Load all</button>
-              </div>
-            )}
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/60 dark:border-slate-700/50 dark:bg-slate-800/40">
-                    {['Time', 'Host', 'Method', 'Path', 'Status', 'Client IP', 'Duration', 'Size', 'TLS'].map((h) => (
-                      <th key={h} className="px-3 py-2.5 text-left font-medium text-slate-400">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/30">
-                  {fetching && !data
-                    ? Array.from({ length: 10 }).map((_, i) => (
-                      <tr key={i}>
-                        {Array.from({ length: 9 }).map((_, j) => (
-                          <td key={j} className="px-3 py-2"><Skeleton className="h-3 w-full" /></td>
-                        ))}
-                      </tr>
-                    ))
-                    : (data?.entries ?? []).length === 0
-                      ? (
-                        <tr>
-                          <td colSpan={9} className="py-12 text-center text-sm text-slate-400">
-                            No entries in this time range — try a wider window
-                          </td>
-                        </tr>
-                      )
-                      : (data?.entries ?? []).map((e, i) => (
-                        <tr key={i} className="hover:bg-slate-50/60 dark:hover:bg-white/5">
-                          <td className="px-3 py-1.5 font-mono text-slate-500 whitespace-nowrap">
-                            {e.time ? new Date(e.time).toLocaleString() : '—'}
-                          </td>
-                          <td className="px-3 py-1.5 font-mono text-violet-600 dark:text-violet-400 whitespace-nowrap">{e.host || '—'}</td>
-                          <td className="px-3 py-1.5 font-mono font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">{e.method ?? '—'}</td>
-                          <td className="max-w-[260px] truncate px-3 py-1.5 font-mono text-slate-600 dark:text-slate-300" title={e.path ?? ''}>{e.path ?? '—'}</td>
-                          <td className={`px-3 py-1.5 text-center font-semibold whitespace-nowrap ${statusColor(e.status)}`}>{e.status ?? '—'}</td>
-                          <td className="px-3 py-1.5 font-mono text-slate-600 dark:text-slate-300 whitespace-nowrap">{e.client_ip ?? '—'}</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-slate-500 whitespace-nowrap">{e.duration_ms > 0 ? `${e.duration_ms}ms` : '—'}</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-slate-400 whitespace-nowrap">{e.bytes != null ? `${(e.bytes / 1024).toFixed(1)}k` : '—'}</td>
-                          <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{e.tls_version ?? '—'}</td>
-                        </tr>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50/60 dark:border-slate-700/50 dark:bg-slate-800/40">
+                  {['Time', 'Host', 'Method', 'Path', 'Status', 'Client IP', 'Duration', 'Size', 'TLS'].map((h) => (
+                    <th key={h} className="px-3 py-2.5 text-left font-medium text-slate-400">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/30">
+                {fetching && !data
+                  ? Array.from({ length: 12 }).map((_, i) => (
+                    <tr key={i}>
+                      {Array.from({ length: 9 }).map((_, j) => (
+                        <td key={j} className="px-3 py-2"><Skeleton className="h-3 w-full" /></td>
                       ))}
-                </tbody>
-              </table>
-            </div>
-          </>
+                    </tr>
+                  ))
+                  : (data?.entries ?? []).length === 0
+                    ? (
+                      <tr>
+                        <td colSpan={9} className="py-12 text-center text-sm text-slate-400">
+                          No entries match — try increasing the line count or adjusting filters
+                        </td>
+                      </tr>
+                    )
+                    : (data?.entries ?? []).map((e, i) => (
+                      <tr key={i} className="hover:bg-slate-50/60 dark:hover:bg-white/5">
+                        <td className="px-3 py-1.5 font-mono text-slate-500 whitespace-nowrap">
+                          {e.time ? new Date(e.time).toLocaleTimeString() : '—'}
+                        </td>
+                        <td className="px-3 py-1.5 font-mono text-violet-600 dark:text-violet-400 whitespace-nowrap">{e.host || '—'}</td>
+                        <td className="px-3 py-1.5 font-mono font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">{e.method ?? '—'}</td>
+                        <td className="max-w-[260px] truncate px-3 py-1.5 font-mono text-slate-600 dark:text-slate-300" title={e.path ?? ''}>{e.path ?? '—'}</td>
+                        <td className={`px-3 py-1.5 text-center font-semibold whitespace-nowrap ${statusColor(e.status)}`}>{e.status ?? '—'}</td>
+                        <td className="px-3 py-1.5 font-mono text-slate-600 dark:text-slate-300 whitespace-nowrap">{e.client_ip ?? '—'}</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-slate-500 whitespace-nowrap">{e.duration_ms > 0 ? `${e.duration_ms}ms` : '—'}</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-slate-400 whitespace-nowrap">{e.bytes != null ? `${(e.bytes / 1024).toFixed(1)}k` : '—'}</td>
+                        <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{e.tls_version ?? '—'}</td>
+                      </tr>
+                    ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {/* Pagination */}
         {data && data.pages > 1 && (
           <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 dark:border-slate-700/50">
-            <span className="text-xs text-slate-500">{((page - 1) * PAGE_SIZE + 1).toLocaleString()}–{Math.min(page * PAGE_SIZE, data.total).toLocaleString()} of {data.total.toLocaleString()}</span>
+            <span className="text-xs text-slate-500">
+              {((page - 1) * PAGE_SIZE + 1).toLocaleString()}–{Math.min(page * PAGE_SIZE, data.total).toLocaleString()} of {data.total.toLocaleString()}
+            </span>
             <div className="flex gap-1">
               <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)}
                 className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800">‹ Prev</button>
