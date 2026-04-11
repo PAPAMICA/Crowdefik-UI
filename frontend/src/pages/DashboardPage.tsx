@@ -220,7 +220,7 @@ export function DashboardPage() {
                     outerRadius={72}
                     paddingAngle={2}
                     cursor="pointer"
-                    onClick={(d: AttackerIp) => setSelectedIp(d.ip)}
+                    onClick={(d) => { const ip = (d as unknown as AttackerIp).ip; if (ip) setSelectedIp(ip) }}
                   >
                     {summary!.top_attacker_ips.slice(0, 8).map((_, i) => (
                       <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -228,7 +228,7 @@ export function DashboardPage() {
                   </Pie>
                   <Tooltip
                     contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
-                    formatter={(v: number, _: string, p: { payload: AttackerIp }) => [v, p.payload.ip]}
+                    formatter={(v, _name, entry) => [v, (entry.payload as AttackerIp).ip]}
                     labelFormatter={() => ''}
                   />
                 </PieChart>
