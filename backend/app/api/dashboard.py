@@ -11,7 +11,7 @@ from app.api.deps import allowed_router_names, get_current_user
 from app.core import cache as cache_mod
 from app.db import get_db
 from app.integrations import crowdsec_client, traefik_client
-from app.models import StoredAlert, StoredDecision, User
+from app.models import IpGeoCache, StoredAlert, StoredDecision, User
 from app.services.routers_view import build_router_rows, filter_rows_for_user
 from app.services.scope_filter import blob_matches_hosts, hosts_from_rules
 from app.settings import get_settings
@@ -19,10 +19,24 @@ from app.settings import get_settings
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
-def _top_ips(decisions: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+def _top_ips_enriched(db: Session, decisions: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
     ips = [d.get("value") or d.get("ip") for d in decisions if (d.get("value") or d.get("ip"))]
     c = Counter([i for i in ips if isinstance(i, str)])
-    return [{"ip": ip, "count": n} for ip, n in c.most_common(limit)]
+    top = c.most_common(limit)
+    if not top:
+        return []
+    ip_list = [ip for ip, _ in top]
+    geo_map = {r.ip: r for r in db.query(IpGeoCache).filter(IpGeoCache.ip.in_(ip_list)).all()}
+    result = []
+    for ip, count in top:
+        geo = geo_map.get(ip)
+        result.append({
+            "ip": ip,
+            "count": count,
+            "country_code": geo.country_code if geo else None,
+            "country": geo.country if geo else None,
+        })
+    return result
 
 
 def compute_dashboard_summary(db: Session, user: User) -> dict[str, Any]:
@@ -66,7 +80,7 @@ def compute_dashboard_summary(db: Session, user: User) -> dict[str, Any]:
         "routers_crowdsec_effective": protected,
         "decisions_count": len(decisions_visible),
         "alerts_count": len(alerts_visible),
-        "top_attacker_ips": _top_ips(decisions_visible),
+        "top_attacker_ips": _top_ips_enriched(db, decisions_visible),
         "attack_types": [{"type": k, "count": v} for k, v in scenario_counts.most_common(12)],
     }
 
@@ -85,26 +99,39 @@ def timeline(
     user: Annotated[User, Depends(get_current_user)],
     days: int = 7,
 ) -> list[dict[str, Any]]:
-    """Alert counts per day for the last N days (from stored DB data)."""
+    """Alert + blocked-IP counts per slot (hourly for 1 day, daily otherwise)."""
     days = max(1, min(days, 90))
-    today = date.today()
+    hourly = days == 1
+    now = datetime.utcnow()
+
+    # Build per-user host filter
+    hosts: set[str] | None = None
+    if not user.is_superuser:
+        allowed = allowed_router_names(db, user)
+        raw_r = cache_mod.get_cached("traefik:routers", lambda: traefik_client.fetch_routers_sync(db))
+        rows_v = filter_rows_for_user(build_router_rows(raw_r), is_superuser=False, allowed_routers=allowed)
+        hosts = hosts_from_rules(rows_v)
+
     result = []
-    for i in range(days - 1, -1, -1):
-        day = today - timedelta(days=i)
-        start = datetime(day.year, day.month, day.day, 0, 0, 0)
-        end = start + timedelta(days=1)
-        q = db.query(StoredAlert).filter(
-            StoredAlert.synced_at >= start,
-            StoredAlert.synced_at < end,
-        )
-        if not user.is_superuser:
-            allowed = allowed_router_names(db, user)
-            raw_r = cache_mod.get_cached("traefik:routers", lambda: traefik_client.fetch_routers_sync(db))
-            rows_v = filter_rows_for_user(build_router_rows(raw_r), is_superuser=False, allowed_routers=allowed)
-            hosts = hosts_from_rules(rows_v)
-            if hosts:
-                q = q.filter(StoredAlert.source_ip.in_(list(hosts)))
-        result.append({"date": day.isoformat(), "count": q.count()})
+    slots = 24 if hourly else days
+    for i in range(slots - 1, -1, -1):
+        if hourly:
+            start = (now - timedelta(hours=i + 1)).replace(minute=0, second=0, microsecond=0)
+            end = start + timedelta(hours=1)
+            label = start.strftime("%H:%M")
+        else:
+            d = date.today() - timedelta(days=i)
+            start = datetime(d.year, d.month, d.day, 0, 0, 0)
+            end = start + timedelta(days=1)
+            label = d.isoformat()
+
+        aq = db.query(StoredAlert).filter(StoredAlert.synced_at >= start, StoredAlert.synced_at < end)
+        dq = db.query(StoredDecision).filter(StoredDecision.synced_at >= start, StoredDecision.synced_at < end)
+        if hosts:
+            aq = aq.filter(StoredAlert.source_ip.in_(list(hosts)))
+            dq = dq.filter(StoredDecision.ip_value.in_(list(hosts)))
+
+        result.append({"date": label, "alerts": aq.count(), "blocked": dq.count()})
     return result
 
 

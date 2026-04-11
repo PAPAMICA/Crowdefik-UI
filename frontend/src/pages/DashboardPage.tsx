@@ -7,19 +7,22 @@ import {
 } from 'recharts'
 import { apiFetch, getToken, wsDashboardUrl } from '../api'
 import { useAuth } from '../auth'
+import { CountryFlag } from '../components/CountryFlag'
+import { IpBadge } from '../components/IpBadge'
 
 const AttackerMap = lazy(() => import('../components/AttackerMap').then((m) => ({ default: m.AttackerMap })))
 
+type AttackerIp = { ip: string; count: number; country_code?: string | null; country?: string | null }
 type Summary = {
   routers_total: number
   routers_crowdsec_effective: number
   decisions_count: number
   alerts_count: number
-  top_attacker_ips: { ip: string; count: number }[]
+  top_attacker_ips: AttackerIp[]
   attack_types: { type: string; count: number }[]
 }
 type GeoPoint = { ip: string; lat: number; lon: number; count: number; scenario: string; country: string }
-type TimelinePoint = { date: string; count: number }
+type TimelinePoint = { date: string; alerts: number; blocked: number }
 type ServiceStat = { host: string; alert_count: number; unique_ips: number; favicon: string | null }
 
 const CARD_CONFIG = [
@@ -46,6 +49,7 @@ export function DashboardPage() {
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [days, setDays] = useState(7)
+  const [selectedIp, setSelectedIp] = useState<string | null>(null)
 
   useEffect(() => {
     void apiFetch('/api/dashboard/summary').then(async (r) => {
@@ -195,34 +199,78 @@ export function DashboardPage() {
           )}
         </div>
 
-        {/* Top attacker IPs */}
+        {/* Top attacker IPs — donut */}
         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
-          <div className="mb-4 flex items-center gap-2">
+          <div className="mb-2 flex items-center gap-2">
             <Shield className="h-4 w-4 text-red-500" />
             <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Top attacker IPs</span>
+            <span className="ml-auto text-[11px] text-slate-400">click for details</span>
           </div>
           {(summary?.top_attacker_ips ?? []).length ? (
-            <div className="space-y-2">
-              {(summary?.top_attacker_ips ?? []).slice(0, 8).map((item, i) => {
-                const max = summary!.top_attacker_ips[0]?.count || 1
-                const pct = Math.max(4, Math.round((item.count / max) * 100))
-                return (
-                  <div key={item.ip} className="flex items-center gap-3">
-                    <span className="w-4 flex-shrink-0 text-center text-[10px] font-bold text-slate-400">{i + 1}</span>
-                    <span className="w-28 flex-shrink-0 font-mono text-xs text-slate-700 dark:text-slate-200 truncate">{item.ip}</span>
-                    <div className="flex-1 rounded-full bg-slate-100 dark:bg-slate-700/60" style={{ height: 6 }}>
-                      <div className="h-1.5 rounded-full bg-red-500 transition-all duration-500" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="w-8 flex-shrink-0 text-right text-xs font-semibold text-slate-600 dark:text-slate-300">{item.count}</span>
-                  </div>
-                )
-              })}
+            <div className="flex items-center gap-2">
+              <ResponsiveContainer width={160} height={220}>
+                <PieChart>
+                  <Pie
+                    data={summary!.top_attacker_ips.slice(0, 8)}
+                    dataKey="count"
+                    nameKey="ip"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={48}
+                    outerRadius={72}
+                    paddingAngle={2}
+                    cursor="pointer"
+                    onClick={(d: AttackerIp) => setSelectedIp(d.ip)}
+                  >
+                    {summary!.top_attacker_ips.slice(0, 8).map((_, i) => (
+                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+                    formatter={(v: number, _: string, p: { payload: AttackerIp }) => [v, p.payload.ip]}
+                    labelFormatter={() => ''}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              {/* Legend */}
+              <div className="flex-1 min-w-0 space-y-1">
+                {summary!.top_attacker_ips.slice(0, 8).map((item, i) => (
+                  <button
+                    key={item.ip}
+                    type="button"
+                    onClick={() => setSelectedIp(item.ip)}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-700/40 transition"
+                  >
+                    <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
+                    {item.country_code
+                      ? <CountryFlag code={item.country_code} size={14} className="flex-shrink-0" />
+                      : <span className="h-[14px] w-5 flex-shrink-0" />}
+                    <span className="min-w-0 flex-1 truncate font-mono text-slate-700 dark:text-slate-200" title={item.ip}>{item.ip}</span>
+                    <span className="flex-shrink-0 font-semibold text-slate-600 dark:text-slate-300">{item.count}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="flex h-[220px] items-center justify-center text-sm text-slate-400">No data yet</div>
           )}
         </div>
       </div>
+
+      {/* IP detail modal — rendered inline, triggered by click */}
+      {selectedIp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => setSelectedIp(null)}>
+          <div className="relative rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-800 w-full max-w-sm mx-4"
+            onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setSelectedIp(null)}
+              className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
+            <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Détails de l'IP</p>
+            <IpBadge ip={selectedIp} />
+          </div>
+        </div>
+      )}
 
       {/* Attacks by service */}
       {serviceStats.length > 0 && (
@@ -273,36 +321,56 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* Alert timeline */}
+      {/* Alert + Blocked timeline */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
-        <div className="mb-4 flex items-center gap-2">
-          <Activity className="h-4 w-4 text-blue-500" />
-          <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Alerts — last {days} day{days > 1 ? 's' : ''}</span>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-blue-500" />
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+              {days === 1 ? 'Activité — dernières 24h (par heure)' : `Activité — last ${days} days`}
+            </span>
+          </div>
+          <div className="flex items-center gap-4 text-[11px]">
+            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-indigo-500" />Alertes</span>
+            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-red-500" />Bloqués</span>
+          </div>
         </div>
         {timeline.length ? (
-          <ResponsiveContainer width="100%" height={180}>
+          <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={timeline} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
               <defs>
                 <linearGradient id="alertGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25} />
                   <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
                 </linearGradient>
+                <linearGradient id="blockedGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
+                  <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" vertical={false} />
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}
-                tickFormatter={(v) => v.slice(5)} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 10, fill: '#94a3b8' }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v: string) => days === 1 ? v : v.slice(5)}
+                interval={days === 1 ? 3 : 'preserveStartEnd'}
+              />
               <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
               <Tooltip
                 contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
                 labelStyle={{ color: '#f1f5f9' }}
                 itemStyle={{ color: '#94a3b8' }}
               />
-              <Area type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={2}
-                fill="url(#alertGrad)" dot={{ r: 3, fill: '#6366f1' }} />
+              <Area type="monotone" dataKey="alerts" name="Alertes" stroke="#6366f1" strokeWidth={2}
+                fill="url(#alertGrad)" dot={false} />
+              <Area type="monotone" dataKey="blocked" name="Bloqués" stroke="#ef4444" strokeWidth={2}
+                fill="url(#blockedGrad)" dot={false} />
             </AreaChart>
           </ResponsiveContainer>
         ) : (
-          <div className="flex h-[180px] items-center justify-center text-sm text-slate-400">No data yet</div>
+          <div className="flex h-[200px] items-center justify-center text-sm text-slate-400">No data yet</div>
         )}
       </div>
 

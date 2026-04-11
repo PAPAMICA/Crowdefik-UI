@@ -30,17 +30,63 @@ def _parse_dt(value: Any) -> datetime | None:
 
 def _extract_target_host(alert: dict) -> str | None:
     """
-    Walk events[*].meta looking for the http_host key.
-    CrowdSec stores the HTTP Host header there when parsing Traefik access logs.
+    Extract the target HTTP host from a CrowdSec alert.
+    Tries several locations used by different CrowdSec parsers:
+     1. events[*].meta  key=http_host  (Traefik access log parser)
+     2. context list    key=http_host  (AppSec WAF)
+     3. context list    key=target_uri → absolute URL host
+     4. alert.decisions[*].scope containing the host
     """
+    # 1. Traefik-style: events[*].meta[key=http_host]
     events = alert.get("events") or []
     for event in events:
         meta = event.get("meta") or []
         for m in meta:
-            if isinstance(m, dict) and m.get("key") == "http_host":
-                value = str(m.get("value") or "").strip()
-                if value:
+            if isinstance(m, dict):
+                key = (m.get("key") or "").lower()
+                if key in ("http_host", "http.host", "host"):
+                    value = str(m.get("value") or "").strip()
+                    if value:
+                        return value.split(":")[0]  # strip port
+
+    # 2 & 3. AppSec WAF context list
+    context = alert.get("context") or []
+    target_uri: str | None = None
+    for c in context:
+        if isinstance(c, dict):
+            key = (c.get("key") or "").lower()
+            value = str(c.get("value") or "").strip()
+            if not value:
+                continue
+            if key in ("http_host", "http.host", "host"):
+                return value.split(":")[0]
+            if key == "target_uri":
+                target_uri = value
+
+    # 3b. If target_uri is an absolute URL, parse the host
+    if target_uri:
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(target_uri)
+            if parsed.hostname:
+                return parsed.hostname
+        except Exception:
+            pass
+
+    # 4. decisions[*].scope for host-scoped decisions
+    for d in (alert.get("decisions") or []):
+        scope = str(d.get("scope") or "").lower()
+        value = str(d.get("value") or "").strip()
+        if scope in ("host", "url") and value:
+            try:
+                from urllib.parse import urlparse
+                h = urlparse(value).hostname or value
+                if "." in h:
+                    return h
+            except Exception:
+                if "." in value:
                     return value
+
     return None
 
 
