@@ -13,8 +13,38 @@ from app.settings import get_settings
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    _run_migrations()
     _bootstrap_admin_if_needed()
     yield
+
+
+# ---------------------------------------------------------------------------
+# Lightweight column-level migrations (no Alembic needed for this project).
+# Each entry is idempotent: ADD COLUMN is only executed when the column is
+# absent, so it is safe to run on every startup.
+# ---------------------------------------------------------------------------
+_MIGRATIONS: list[tuple[str, str]] = [
+    # (check_sql, alter_sql)
+    (
+        "SELECT abuseipdb_api_key_enc FROM instance_settings LIMIT 1",
+        "ALTER TABLE instance_settings ADD COLUMN abuseipdb_api_key_enc TEXT",
+    ),
+]
+
+
+def _run_migrations() -> None:
+    import logging
+
+    log = logging.getLogger(__name__)
+    with engine.connect() as conn:
+        for check_sql, alter_sql in _MIGRATIONS:
+            try:
+                conn.exec_driver_sql(check_sql)
+            except Exception:
+                # Column missing → apply migration
+                log.info("Applying migration: %s", alter_sql)
+                conn.exec_driver_sql(alter_sql)
+                conn.commit()
 
 
 def _bootstrap_admin_if_needed() -> None:
