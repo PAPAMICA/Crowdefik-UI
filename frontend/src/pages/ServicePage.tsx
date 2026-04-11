@@ -11,6 +11,7 @@ import {
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
+import { Skeleton, SkeletonCard, SkeletonRow } from '../components/Skeleton'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ type Stats = {
   total_events: number
 }
 
-type TimelinePoint = { date: string; alerts: number }
+type TimelinePoint = { date: string; alerts: number; blocked: number }
 
 type TopIp = {
   ip: string; count: number
@@ -210,21 +211,37 @@ export function ServicePage() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard icon={AlertTriangle} label="Total alerts" value={s?.total_alerts ?? '—'} color="border-red-500/20 bg-red-500/5" />
-        <StatCard icon={Users} label="Unique attacker IPs" value={s?.unique_ips ?? '—'} color="border-amber-500/20 bg-amber-500/5" />
-        <StatCard icon={Ban} label="Blocked decisions" value={s?.blocked_decisions ?? '—'} color="border-violet-500/20 bg-violet-500/5" />
-        <StatCard icon={Shield} label="Total events" value={s?.total_events ?? '—'} color="border-blue-500/20 bg-blue-500/5" />
+        {loadingOverview ? (
+          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : (
+          <>
+            <StatCard icon={AlertTriangle} label="Total alerts" value={s?.total_alerts ?? '—'} color="border-red-500/20 bg-red-500/5" />
+            <StatCard icon={Users} label="Unique attacker IPs" value={s?.unique_ips ?? '—'} color="border-amber-500/20 bg-amber-500/5" />
+            <StatCard icon={Ban} label="Blocked decisions" value={s?.blocked_decisions ?? '—'} color="border-violet-500/20 bg-violet-500/5" />
+            <StatCard icon={Shield} label="Total events" value={s?.total_events ?? '—'} color="border-blue-500/20 bg-blue-500/5" />
+          </>
+        )}
       </div>
 
       {/* Timeline + Scenarios */}
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Timeline — 2/3 */}
         <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
-          <div className="mb-4 flex items-center gap-2">
-            <Activity className="h-4 w-4 text-indigo-500" />
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Alerts over time</span>
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Activity className="h-4 w-4 text-indigo-500" />
+              <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                {days === 1 ? 'Activity — last 24h (per hour)' : `Alerts over time — last ${days} days`}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-[11px]">
+              <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-indigo-500" />Alerts</span>
+              <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-red-500" />Blocked</span>
+            </div>
           </div>
-          {overview?.timeline?.length ? (
+          {loadingOverview ? (
+            <Skeleton className="h-[180px] w-full" />
+          ) : overview?.timeline?.length ? (
             <ResponsiveContainer width="100%" height={180}>
               <AreaChart data={overview.timeline} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
                 <defs>
@@ -232,21 +249,28 @@ export function ServicePage() {
                     <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25} />
                     <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
                   </linearGradient>
+                  <linearGradient id="svcBlockedGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                  </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" vertical={false} />
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}
-                  tickFormatter={(v: string) => v.slice(5)} interval="preserveStartEnd" />
+                  tickFormatter={(v: string) => days === 1 ? v : v.slice(5)}
+                  interval={days === 1 ? 3 : 'preserveStartEnd'} />
                 <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip
                   contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: '#f1f5f9' }} itemStyle={{ color: '#94a3b8' }} />
                 <Area type="monotone" dataKey="alerts" name="Alerts" stroke="#6366f1" strokeWidth={2}
                   fill="url(#svcGrad)" dot={false} />
+                <Area type="monotone" dataKey="blocked" name="Blocked" stroke="#ef4444" strokeWidth={2}
+                  fill="url(#svcBlockedGrad)" dot={false} />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
             <div className="flex h-[180px] items-center justify-center text-sm text-slate-400">
-              {loadingOverview ? 'Loading…' : 'No data for this period'}
+              No data for this period
             </div>
           )}
         </div>
@@ -257,7 +281,12 @@ export function ServicePage() {
             <AlertTriangle className="h-4 w-4 text-amber-500" />
             <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Top attack types</span>
           </div>
-          {overview?.top_scenarios?.length ? (
+          {loadingOverview ? (
+            <div className="space-y-2 pt-2">
+              <Skeleton className="mx-auto h-[120px] w-[120px] rounded-full" />
+              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-4 w-full" />)}
+            </div>
+          ) : overview?.top_scenarios?.length ? (
             <>
               <ResponsiveContainer width="100%" height={120}>
                 <PieChart>
@@ -289,7 +318,7 @@ export function ServicePage() {
             </>
           ) : (
             <div className="flex h-[180px] items-center justify-center text-sm text-slate-400">
-              {loadingOverview ? 'Loading…' : 'No attacks recorded'}
+              No attacks recorded
             </div>
           )}
         </div>
@@ -297,7 +326,11 @@ export function ServicePage() {
 
       {/* Top attacker IPs */}
       <Section title="Top attacker IPs" icon={Globe} iconColor="text-red-500">
-        {overview?.top_ips?.length ? (
+        {loadingOverview ? (
+          <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
+            {Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)}
+          </div>
+        ) : overview?.top_ips?.length ? (
           <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
             {overview.top_ips.map((ip) => (
               <div key={ip.ip} className="flex items-center gap-3 px-5 py-3">
@@ -320,13 +353,18 @@ export function ServicePage() {
           </div>
         ) : (
           <p className="px-5 py-8 text-center text-sm text-slate-400">
-            {loadingOverview ? 'Loading…' : 'No attacker data for this period'}
+            No attacker data for this period
           </p>
         )}
       </Section>
 
       {/* Recent alerts */}
       <Section title="Recent alerts" icon={AlertTriangle} iconColor="text-amber-500">
+        {loadingOverview ? (
+          <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
+            {Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)}
+          </div>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -372,20 +410,21 @@ export function ServicePage() {
               )) : (
                 <tr>
                   <td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-400">
-                    {loadingOverview ? 'Loading…' : 'No alerts for this period'}
+                    No alerts for this period
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+        )}
       </Section>
 
       {/* Traefik request logs */}
       <Section title="Request logs" icon={FileText} iconColor="text-blue-500">
-        {!logsData && loadingLogs ? (
-          <div className="flex h-32 items-center justify-center gap-2 text-sm text-slate-400">
-            <RefreshCw className="h-4 w-4 animate-spin" /> Loading logs…
+        {loadingLogs && !logsData ? (
+          <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
+            {Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} />)}
           </div>
         ) : logsData?.available === false ? (
           <div className="px-5 py-8 text-center">

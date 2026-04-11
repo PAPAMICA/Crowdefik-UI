@@ -1,5 +1,3 @@
-import json
-from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 
@@ -10,78 +8,87 @@ from sqlalchemy.orm import Session
 from app.api.deps import allowed_router_names, get_current_user
 from app.core import cache as cache_mod
 from app.db import get_db
-from app.integrations import crowdsec_client, traefik_client
+from app.integrations import traefik_client
 from app.models import IpGeoCache, StoredAlert, StoredDecision, User
 from app.services.routers_view import build_router_rows, filter_rows_for_user
-from app.services.scope_filter import blob_matches_hosts, hosts_from_rules
-from app.settings import get_settings
+from app.services.scope_filter import hosts_from_rules
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-
-def _top_ips_enriched(db: Session, decisions: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
-    ips = [d.get("value") or d.get("ip") for d in decisions if (d.get("value") or d.get("ip"))]
-    c = Counter([i for i in ips if isinstance(i, str)])
-    top = c.most_common(limit)
-    if not top:
-        return []
-    ip_list = [ip for ip, _ in top]
-    geo_map = {r.ip: r for r in db.query(IpGeoCache).filter(IpGeoCache.ip.in_(ip_list)).all()}
-    result = []
-    for ip, count in top:
-        geo = geo_map.get(ip)
-        result.append({
-            "ip": ip,
-            "count": count,
-            "country_code": geo.country_code if geo else None,
-            "country": geo.country if geo else None,
-        })
-    return result
+SUMMARY_DAYS = 7
 
 
-def compute_dashboard_summary(db: Session, user: User) -> dict[str, Any]:
-    s = get_settings()
-
+def _visible_rows(db: Session, user: User):
     def traefik_factory():
         return traefik_client.fetch_routers_sync(db)
 
     raw_routers = cache_mod.get_cached("traefik:routers", traefik_factory)
     rows = build_router_rows(raw_routers)
     allowed = allowed_router_names(db, user)
-    rows_visible = filter_rows_for_user(rows, is_superuser=user.is_superuser, allowed_routers=allowed)
+    return filter_rows_for_user(rows, is_superuser=user.is_superuser, allowed_routers=allowed)
+
+
+def compute_dashboard_summary(db: Session, user: User) -> dict[str, Any]:
+    """Build dashboard summary entirely from the local DB — no LAPI round-trip."""
+    rows_visible = _visible_rows(db, user)
     protected = sum(1 for r in rows_visible if r["crowdsec_effective"])
 
-    def decisions_factory():
-        return crowdsec_client.fetch_decisions_sync(db)
-
-    def alerts_factory():
-        return crowdsec_client.fetch_alerts_sync(db)
-
-    decisions = cache_mod.get_cached("crowdsec:decisions", decisions_factory, ttl_seconds=s.crowdsec_cache_ttl_seconds)
-    alerts = cache_mod.get_cached("crowdsec:alerts", alerts_factory, ttl_seconds=s.crowdsec_cache_ttl_seconds)
-
-    if user.is_superuser:
-        decisions_visible = decisions
-        alerts_visible = alerts
-    else:
+    cutoff = datetime.utcnow() - timedelta(days=SUMMARY_DAYS)
+    hosts: set[str] | None = None
+    if not user.is_superuser:
         hosts = hosts_from_rules(rows_visible)
-        decisions_visible = [d for d in decisions if blob_matches_hosts(d, hosts)]
-        alerts_visible = [a for a in alerts if blob_matches_hosts(a, hosts)]
 
-    scenario_counts: Counter[str] = Counter()
-    for a in alerts_visible:
-        if isinstance(a, dict):
-            scen = a.get("scenario") or (a.get("labels", {}).get("scenario") if isinstance(a.get("labels"), dict) else None)
-            if scen:
-                scenario_counts[str(scen)] += 1
+    # Alerts count (rolling 7 days)
+    alert_q = db.query(StoredAlert).filter(StoredAlert.synced_at >= cutoff)
+    if hosts is not None:
+        alert_q = alert_q.filter(StoredAlert.target_host.in_(hosts))
+    alerts_count = alert_q.count()
+
+    # Decisions count (current snapshot in DB)
+    decisions_count = db.query(StoredDecision).count()
+
+    # Top attacker IPs by alert frequency
+    top_ip_q = (
+        db.query(StoredAlert.source_ip, func.count(StoredAlert.id).label("cnt"))
+        .filter(StoredAlert.synced_at >= cutoff, StoredAlert.source_ip.isnot(None))
+        .group_by(StoredAlert.source_ip)
+        .order_by(func.count(StoredAlert.id).desc())
+        .limit(10)
+    )
+    if hosts is not None:
+        top_ip_q = top_ip_q.filter(StoredAlert.target_host.in_(hosts))
+    top_ip_rows = top_ip_q.all()
+
+    ip_list = [r.source_ip for r in top_ip_rows]
+    geo_map = {r.ip: r for r in db.query(IpGeoCache).filter(IpGeoCache.ip.in_(ip_list)).all()}
+    top_ips = [
+        {
+            "ip": r.source_ip,
+            "count": r.cnt,
+            "country_code": geo_map[r.source_ip].country_code if r.source_ip in geo_map else None,
+            "country": geo_map[r.source_ip].country if r.source_ip in geo_map else None,
+        }
+        for r in top_ip_rows
+    ]
+
+    # Attack type breakdown
+    sc_q = (
+        db.query(StoredAlert.scenario, func.count(StoredAlert.id).label("cnt"))
+        .filter(StoredAlert.synced_at >= cutoff, StoredAlert.scenario != "")
+        .group_by(StoredAlert.scenario)
+        .order_by(func.count(StoredAlert.id).desc())
+        .limit(12)
+    )
+    if hosts is not None:
+        sc_q = sc_q.filter(StoredAlert.target_host.in_(hosts))
 
     return {
         "routers_total": len(rows_visible),
         "routers_crowdsec_effective": protected,
-        "decisions_count": len(decisions_visible),
-        "alerts_count": len(alerts_visible),
-        "top_attacker_ips": _top_ips_enriched(db, decisions_visible),
-        "attack_types": [{"type": k, "count": v} for k, v in scenario_counts.most_common(12)],
+        "decisions_count": decisions_count,
+        "alerts_count": alerts_count,
+        "top_attacker_ips": top_ips,
+        "attack_types": [{"type": r.scenario, "count": r.cnt} for r in sc_q.all()],
     }
 
 

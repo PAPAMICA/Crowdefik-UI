@@ -79,19 +79,51 @@ def service_overview(
         .scalar() or 0
     )
 
-    # ── timeline ──────────────────────────────────────────────────────────────
+    # ── timeline (hourly for 1 day, daily otherwise) ──────────────────────────
     from datetime import date as date_type
+    hourly = days == 1
+    now = datetime.utcnow()
+    slots = 24 if hourly else days
+
+    # Pre-compute all attacker IPs for this service (used for blocked curve)
+    attacker_ips = {
+        row.source_ip
+        for row in db.query(StoredAlert.source_ip)
+        .filter(StoredAlert.target_host == host, StoredAlert.synced_at >= cutoff, StoredAlert.source_ip.isnot(None))
+        .distinct()
+        .all()
+        if row.source_ip
+    }
+
     timeline = []
-    for i in range(days - 1, -1, -1):
-        d = date_type.today() - timedelta(days=i)
-        start = datetime(d.year, d.month, d.day)
-        end = start + timedelta(days=1)
-        count = (
+    for i in range(slots - 1, -1, -1):
+        if hourly:
+            slot_start = (now - timedelta(hours=i + 1)).replace(minute=0, second=0, microsecond=0)
+            slot_end = slot_start + timedelta(hours=1)
+            label = slot_start.strftime("%H:%M")
+        else:
+            d = date_type.today() - timedelta(days=i)
+            slot_start = datetime(d.year, d.month, d.day)
+            slot_end = slot_start + timedelta(days=1)
+            label = d.isoformat()
+
+        alerts_in_slot = (
             db.query(StoredAlert)
-            .filter(StoredAlert.target_host == host, StoredAlert.synced_at >= start, StoredAlert.synced_at < end)
+            .filter(StoredAlert.target_host == host, StoredAlert.synced_at >= slot_start, StoredAlert.synced_at < slot_end)
             .count()
         )
-        timeline.append({"date": d.isoformat(), "alerts": count})
+        blocked_in_slot = 0
+        if attacker_ips:
+            blocked_in_slot = (
+                db.query(StoredDecision)
+                .filter(
+                    StoredDecision.ip_value.in_(attacker_ips),
+                    StoredDecision.synced_at >= slot_start,
+                    StoredDecision.synced_at < slot_end,
+                )
+                .count()
+            )
+        timeline.append({"date": label, "alerts": alerts_in_slot, "blocked": blocked_in_slot})
 
     # ── top attacker IPs ──────────────────────────────────────────────────────
     ip_counts = (
@@ -209,7 +241,8 @@ def service_logs(
                 entry = _json.loads(line)
             except _json.JSONDecodeError:
                 continue
-            entry_host = (entry.get("RequestHost") or entry.get("RequestAddr") or "").lower()
+            # Strip optional port (e.g. "example.com:443" → "example.com")
+            entry_host = (entry.get("RequestHost") or entry.get("RequestAddr") or "").lower().split(":")[0].strip()
             if entry_host != host:
                 continue
             entries.append({
