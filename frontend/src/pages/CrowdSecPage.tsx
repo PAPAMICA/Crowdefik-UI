@@ -549,9 +549,9 @@ function MetricsSummary({ raw }: { raw: CscliMetrics }) {
   // lapi decisions
   const decisions = raw.lapi_decisions ?? raw.decisions
   if (decisions && typeof decisions === 'object') {
-    const total = Array.isArray(decisions)
-      ? (decisions as Record<string, unknown>[]).reduce((acc, r) => acc + Number(r.count ?? r.Count ?? 0), 0)
-      : Object.values(decisions as Record<string, unknown>).reduce((acc, v) => acc + Number(v), 0)
+    const total: number = Array.isArray(decisions)
+      ? (decisions as Record<string, unknown>[]).reduce((acc: number, r) => acc + Number(r.count ?? r.Count ?? 0), 0)
+      : Object.values(decisions as Record<string, number | unknown>).reduce((acc: number, v) => acc + Number(v), 0)
     if (total > 0) cards.push({ label: 'Décisions actives', value: num(total), color: 'border-amber-500/20 bg-amber-500/5' })
   }
 
