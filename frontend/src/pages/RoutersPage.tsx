@@ -125,7 +125,11 @@ export function RoutersPage() {
           r.service?.toLowerCase().includes(q)
         )
       })
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort((a, b) => {
+        const ua = extractUrl(a.rule) ?? a.name
+        const ub = extractUrl(b.rule) ?? b.name
+        return ua.localeCompare(ub)
+      })
   }, [rows, search, filter])
 
   async function doAction(name: string, action: 'enable' | 'disable' | 'reset') {
@@ -253,22 +257,35 @@ export function RoutersPage() {
                 return (
                   <tr key={r.name} className="hover:bg-slate-50/50 dark:hover:bg-white/5">
                     <td className="px-4 py-3">
-                      <div className="flex flex-col gap-0.5">
-                        {url ? (
-                          <a
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-sm font-medium text-violet-600 hover:underline dark:text-violet-400"
-                          >
-                            {url.replace('https://', '')}
-                            <ExternalLink className="h-3 w-3 flex-shrink-0 opacity-60" />
-                          </a>
-                        ) : (
-                          <span className="font-mono text-xs text-slate-500 dark:text-slate-400">{r.rule ?? '—'}</span>
+                      <div className="flex items-start gap-2.5">
+                        {/* Favicon */}
+                        {url && (
+                          <img
+                            src={`https://icons.duckduckgo.com/ip3/${new URL(url).hostname}.ico`}
+                            alt=""
+                            width={20}
+                            height={20}
+                            className="mt-0.5 h-5 w-5 flex-shrink-0 rounded-sm object-contain"
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }}
+                          />
                         )}
-                        <span className="font-mono text-[10px] text-slate-400">{r.name}</span>
-                        <WafBadge result={waf} />
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          {url ? (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-sm font-medium text-violet-600 hover:underline dark:text-violet-400"
+                            >
+                              <span className="truncate">{url.replace('https://', '')}</span>
+                              <ExternalLink className="h-3 w-3 flex-shrink-0 opacity-60" />
+                            </a>
+                          ) : (
+                            <span className="font-mono text-xs text-slate-500 dark:text-slate-400">{r.rule ?? '—'}</span>
+                          )}
+                          <span className="font-mono text-[10px] text-slate-400">{r.name}</span>
+                          <WafBadge result={waf} />
+                        </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">
