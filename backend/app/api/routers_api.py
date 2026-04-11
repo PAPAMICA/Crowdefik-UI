@@ -1,4 +1,6 @@
 import re
+import ssl
+from urllib.parse import urlparse
 from typing import Annotated, Literal
 
 import httpx
@@ -10,6 +12,7 @@ from app.api.deps import allowed_router_names, ensure_router_allowed, get_curren
 from app.core import cache as cache_mod
 from app.db import get_db
 from app.integrations import traefik_client
+from app.integrations.instance_settings import get_or_create_instance_settings
 from app.integrations.traefik_override import (
     crowdsec_effective,
     override_state,
@@ -59,9 +62,13 @@ def waf_test(
     user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     """
-    Send a request with a typical XSS payload to the service URL.
-    The CrowdSec AppSec module should respond with 403.
-    Returns {blocked: bool, status_code: int, url: str, error?: str}.
+    Probe the CrowdSec AppSec WAF by sending a malicious payload through
+    Traefik's internal Docker address (avoids hairpin-NAT issues).
+
+    Route:  backend  →  traefik:443  →  CrowdSec AppSec  →  (blocked 403 or pass-through)
+
+    The Host header tells Traefik which router/middleware chain to use.
+    Returns {blocked, status_code, url, probe_url, error?}.
     """
     allowed = allowed_router_names(db, user)
     ensure_router_allowed(user, router_name, allowed)
@@ -73,20 +80,65 @@ def waf_test(
 
     host = _extract_host_from_rule(str(match.get("rule") or ""))
     if not host:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail="Cannot extract hostname from router rule")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot extract hostname from router rule",
+        )
 
-    # Typical payload that triggers CrowdSec AppSec XSS rule
-    test_url = f"https://{host}/?waf_probe=<script>alert(1)</script>"
+    # Derive Traefik's internal hostname from the configured API URL
+    # (e.g. http://traefik:8080  →  "traefik")
+    instance = get_or_create_instance_settings(db)
+    parsed = urlparse(str(instance.traefik_api_url))
+    traefik_internal = parsed.hostname or "traefik"
+
+    # XSS payload — triggers CrowdSec AppSec generic XSS rule
+    payload = "?waf_probe=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+    # URL used for display only (readable)
+    display_url = f"https://{host}/{payload}"
+    # Actual probe goes to Traefik's internal HTTPS port
+    probe_url = f"https://{traefik_internal}{payload}"
+
+    # Disable cert verification — we don't care about the cert of the internal endpoint
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
     try:
-        with httpx.Client(timeout=8.0, verify=False, follow_redirects=True) as client:
-            r = client.get(test_url, headers={"User-Agent": "Crowdefik-WAF-Probe/1.0"})
+        with httpx.Client(
+            transport=httpx.HTTPTransport(ssl=ssl_ctx),
+            timeout=8.0,
+            follow_redirects=False,
+        ) as client:
+            r = client.get(
+                probe_url,
+                headers={
+                    "Host": host,
+                    "User-Agent": "Crowdefik-WAF-Probe/1.0",
+                },
+            )
             blocked = r.status_code in (403, 406)
-            return {"blocked": blocked, "status_code": r.status_code, "url": test_url}
+            return {
+                "blocked": blocked,
+                "status_code": r.status_code,
+                "url": display_url,
+                "probe_url": probe_url,
+            }
     except httpx.ConnectError as exc:
-        return {"blocked": False, "status_code": None, "url": test_url, "error": f"Connection refused: {exc}"}
+        return {
+            "blocked": False,
+            "status_code": None,
+            "url": display_url,
+            "probe_url": probe_url,
+            "error": f"Cannot reach Traefik at {traefik_internal}:443 — {exc}",
+        }
     except Exception as exc:
-        return {"blocked": False, "status_code": None, "url": test_url, "error": str(exc)[:300]}
+        return {
+            "blocked": False,
+            "status_code": None,
+            "url": display_url,
+            "probe_url": probe_url,
+            "error": str(exc)[:300],
+        }
 
 
 @router.post("/crowdsec/bulk")

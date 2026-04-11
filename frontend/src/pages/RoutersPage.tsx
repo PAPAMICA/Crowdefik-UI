@@ -21,7 +21,7 @@ type RouterRow = {
 
 type FilterState = 'all' | 'protected' | 'unprotected'
 
-type WafResult = { blocked: boolean; status_code: number | null; url: string; error?: string }
+type WafResult = { blocked: boolean; status_code: number | null; url: string; probe_url?: string; error?: string }
 
 // ── Helpers ──────────────────────────────────────────────────
 function extractUrl(rule: string | null): string | null {
@@ -34,17 +34,35 @@ function extractUrl(rule: string | null): string | null {
 function WafBadge({ result }: { result: WafResult | null | 'loading' | 'idle' }) {
   if (result === 'idle' || result === null) return null
   if (result === 'loading')
-    return <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-400 dark:bg-slate-700">Testing…</span>
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-400 dark:bg-slate-700">
+        Probing WAF…
+      </span>
+    )
   if (result.error)
-    return <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-400 dark:bg-slate-700" title={result.error}>Unreachable</span>
+    return (
+      <span
+        className="inline-flex max-w-xs cursor-help items-center gap-1 rounded-full bg-orange-500/10 px-2 py-0.5 text-[10px] font-medium text-orange-600 dark:text-orange-400"
+        title={result.error}
+      >
+        WAF — unreachable ⚠
+      </span>
+    )
   if (result.blocked)
-    return <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">WAF ✓ blocked</span>
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+        title={`HTTP ${result.status_code} — request was blocked`}
+      >
+        WAF ✓ blocked ({result.status_code})
+      </span>
+    )
   return (
     <span
-      className="ml-1 inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-600 dark:text-red-400"
-      title={`Got HTTP ${result.status_code ?? '?'}`}
+      className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-600 dark:text-red-400"
+      title={`HTTP ${result.status_code ?? '?'} — request was NOT blocked`}
     >
-      WAF ✗ not blocked
+      WAF ✗ not blocked ({result.status_code ?? '?'})
     </span>
   )
 }
