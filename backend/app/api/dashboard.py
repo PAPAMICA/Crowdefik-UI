@@ -74,3 +74,77 @@ def summary(
     user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, Any]:
     return compute_dashboard_summary(db, user)
+
+
+@router.get("/geo")
+def geo_points(
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> list[dict[str, Any]]:
+    """Return geolocated attacker IPs from recent alerts (lat/lon from CrowdSec source field)."""
+    from app.integrations import ipgeo_client
+
+    s = get_settings()
+
+    def alerts_factory():
+        return crowdsec_client.fetch_alerts_sync(db)
+
+    alerts = cache_mod.get_cached("crowdsec:alerts", alerts_factory, ttl_seconds=s.crowdsec_cache_ttl_seconds)
+
+    if not user.is_superuser:
+        from app.api.deps import allowed_router_names
+        from app.services.routers_view import build_router_rows, filter_rows_for_user
+        from app.services.scope_filter import blob_matches_hosts, hosts_from_rules
+
+        def traefik_factory():
+            return traefik_client.fetch_routers_sync(db)
+
+        raw_routers = cache_mod.get_cached("traefik:routers", traefik_factory)
+        rows = build_router_rows(raw_routers)
+        allowed = allowed_router_names(db, user)
+        rows_visible = filter_rows_for_user(rows, is_superuser=False, allowed_routers=allowed)
+        hosts = hosts_from_rules(rows_visible)
+        alerts = [a for a in alerts if blob_matches_hosts(a, hosts)]
+
+    points: dict[str, dict[str, Any]] = {}
+    ips_without_geo: list[str] = []
+
+    for a in alerts:
+        if not isinstance(a, dict):
+            continue
+        src = a.get("source") or {}
+        ip = src.get("ip") or src.get("value") or a.get("source_ip")
+        if not ip:
+            continue
+        lat = src.get("latitude")
+        lon = src.get("longitude")
+        scenario = a.get("scenario") or ""
+        country = src.get("cn") or src.get("country_code") or ""
+
+        if ip in points:
+            points[ip]["count"] += 1
+        elif lat is not None and lon is not None:
+            points[ip] = {"ip": ip, "lat": float(lat), "lon": float(lon), "count": 1, "scenario": scenario, "country": country}
+        else:
+            ips_without_geo.append(ip)
+
+    # Batch geolocate IPs that CrowdSec didn't provide coordinates for
+    missing = [ip for ip in ips_without_geo if ip not in points][:30]
+    if missing:
+        geo_results = ipgeo_client.batch_geolocate(missing)
+        for g in geo_results:
+            ip = g.get("query", "")
+            if ip and g.get("lat") and g.get("lon"):
+                if ip in points:
+                    points[ip]["count"] += 1
+                else:
+                    points[ip] = {
+                        "ip": ip,
+                        "lat": float(g["lat"]),
+                        "lon": float(g["lon"]),
+                        "count": 1,
+                        "scenario": "",
+                        "country": g.get("countryCode", ""),
+                    }
+
+    return sorted(points.values(), key=lambda x: x["count"], reverse=True)[:100]

@@ -43,4 +43,5 @@ class InstanceSettings(Base):
     traefik_basic_password_enc = mapped_column(Text, nullable=True)
     crowdsec_lapi_url = mapped_column(String(512), default="http://crowdsec:8080", nullable=False)
     crowdsec_api_key_enc = mapped_column(Text, nullable=True)
+    abuseipdb_api_key_enc = mapped_column(Text, nullable=True)
     updated_at = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
