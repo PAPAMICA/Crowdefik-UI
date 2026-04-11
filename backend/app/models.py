@@ -67,6 +67,9 @@ class StoredAlert(Base):
     source_lon = mapped_column(Float, nullable=True)
     # Target service extracted from events[*].meta http_host
     target_host = mapped_column(String(256), nullable=True, index=True)
+    # Set to True once we have tried Traefik log correlation (success or not).
+    # Prevents re-reading the log file on every sync for unresolvable WAF alerts.
+    log_enrichment_attempted = mapped_column(Boolean, default=False, nullable=False)
     events_count = mapped_column(Integer, default=1, nullable=False)
     start_at = mapped_column(DateTime, nullable=True, index=True)
     stop_at = mapped_column(DateTime, nullable=True)

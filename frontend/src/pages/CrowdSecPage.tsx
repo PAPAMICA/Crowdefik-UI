@@ -118,13 +118,13 @@ function parseMetrics(raw: CscliMetrics): Array<{ title: string; rows: Record<st
     lapi: 'Local API',
     lapi_bouncer: 'Bouncers — API',
     lapi_machine: 'Machines — API',
-    lapi_decisions: 'Décisions',
+    lapi_decisions: 'Decisions',
     appsec: 'AppSec Engine',
-    appsec_rules: 'Règles AppSec',
+    appsec_rules: 'AppSec Rules',
     parsers: 'Parsers',
-    scenarios: 'Scénarios',
-    whitelists: 'Listes blanches',
-    alerts: 'Alertes LAPI',
+    scenarios: 'Scenarios',
+    whitelists: 'Whitelists',
+    alerts: 'LAPI Alerts',
     buckets: 'Buckets',
   }
 
@@ -218,15 +218,15 @@ export function CrowdSecPage() {
       })
       const d = await r.json() as { ok: boolean; error?: string }
       if (d.ok) {
-        setAddResult({ ok: true, msg: `Bouncer "${newBouncerName}" créé.` })
+        setAddResult({ ok: true, msg: `Bouncer "${newBouncerName}" created.` })
         setNewBouncerName(''); setShowAddBouncer(false)
         await loadData()
-      } else { setAddResult({ ok: false, msg: d.error ?? 'Erreur' }) }
+      } else { setAddResult({ ok: false, msg: d.error ?? 'Error' }) }
     } finally { setSaving(false) }
   }
 
   async function doDeleteBouncer(name: string) {
-    if (!confirm(`Supprimer le bouncer "${name}" ?`)) return
+    if (!confirm(`Delete bouncer "${name}"?`)) return
     await apiFetch(`/api/crowdsec/bouncers/${encodeURIComponent(name)}`, { method: 'DELETE' })
     await loadData()
   }
@@ -242,15 +242,15 @@ export function CrowdSecPage() {
       })
       const d = await r.json() as { ok: boolean; error?: string }
       if (d.ok) {
-        setAddResult({ ok: true, msg: `Machine "${newMachineId}" créée. Configurez-la dans les paramètres.` })
+        setAddResult({ ok: true, msg: `Machine "${newMachineId}" created. Configure it in settings.` })
         setNewMachineId(''); setNewMachinePass(''); setShowAddMachine(false)
         await loadData()
-      } else { setAddResult({ ok: false, msg: d.error ?? 'Erreur' }) }
+      } else { setAddResult({ ok: false, msg: d.error ?? 'Error' }) }
     } finally { setSaving(false) }
   }
 
   async function doDeleteMachine(id: string) {
-    if (!confirm(`Supprimer la machine "${id}" ?`)) return
+    if (!confirm(`Delete machine "${id}"?`)) return
     await apiFetch(`/api/crowdsec/machines/${encodeURIComponent(id)}`, { method: 'DELETE' })
     await loadData()
   }
@@ -267,7 +267,7 @@ export function CrowdSecPage() {
   const TABS: { id: Tab; label: string; icon: typeof Shield }[] = [
     { id: 'bouncers', label: 'Bouncers', icon: Shield },
     { id: 'machines', label: 'Machines', icon: Bot },
-    { id: 'metrics', label: 'Métriques', icon: BarChart2 },
+    { id: 'metrics', label: 'Metrics', icon: BarChart2 },
   ]
 
   return (
@@ -276,12 +276,12 @@ export function CrowdSecPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">CrowdSec</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Gestion des bouncers, machines et métriques LAPI</p>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage bouncers, machines and LAPI metrics</p>
         </div>
         <button type="button"
           onClick={() => { void loadData(); if (tab === 'metrics') void loadMetrics() }}
           className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
-          <RefreshCw className={`h-4 w-4 ${(loading || metricsLoading) ? 'animate-spin' : ''}`} /> Actualiser
+          <RefreshCw className={`h-4 w-4 ${(loading || metricsLoading) ? 'animate-spin' : ''}`} /> Refresh
         </button>
       </div>
 
@@ -290,9 +290,9 @@ export function CrowdSecPage() {
         <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm dark:border-red-500/30 dark:bg-red-900/20">
           <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-500" />
           <div className="text-red-800 dark:text-red-300">
-            <p className="font-semibold">Impossible d'accéder à cscli</p>
+            <p className="font-semibold">Cannot reach cscli</p>
             <p className="mt-0.5 text-xs">{error}</p>
-            <p className="mt-1 text-xs">Vérifiez le nom du conteneur dans <Link to="/settings" className="underline">les paramètres</Link>.</p>
+            <p className="mt-1 text-xs">Check the container name in <Link to="/settings" className="underline">settings</Link>.</p>
           </div>
         </div>
       )}
@@ -311,9 +311,9 @@ export function CrowdSecPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
           { icon: Shield, label: 'Bouncers total', value: bouncers.length, color: 'border-violet-500/20 bg-violet-500/5' },
-          { icon: CheckCircle2, label: 'Bouncers actifs', value: activeBouncers.length, color: 'border-emerald-500/20 bg-emerald-500/5' },
+          { icon: CheckCircle2, label: 'Active bouncers', value: activeBouncers.length, color: 'border-emerald-500/20 bg-emerald-500/5' },
           { icon: Users, label: 'Machines total', value: machines.length, color: 'border-blue-500/20 bg-blue-500/5' },
-          { icon: Bot, label: 'Machines validées', value: validatedMachines.length, color: 'border-indigo-500/20 bg-indigo-500/5' },
+          { icon: Bot, label: 'Validated machines', value: validatedMachines.length, color: 'border-indigo-500/20 bg-indigo-500/5' },
         ].map(({ icon: Icon, label, value, color }) => (
           <div key={label} className={`rounded-2xl border bg-white p-5 dark:bg-slate-800/60 ${color}`}>
             <div className="flex items-center justify-between">
@@ -349,29 +349,29 @@ export function CrowdSecPage() {
             </h2>
             <button type="button" onClick={() => setShowAddBouncer((v) => !v)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-violet-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-600">
-              <Plus className="h-3 w-3" /> Ajouter
+              <Plus className="h-3 w-3" /> Add
             </button>
           </div>
 
           {showAddBouncer && (
             <div className="border-b border-slate-100 bg-slate-50 px-5 py-4 dark:border-slate-700/50 dark:bg-slate-800/40">
-              <p className="mb-2 text-xs font-medium text-slate-600 dark:text-slate-300">Nouveau bouncer</p>
+              <p className="mb-2 text-xs font-medium text-slate-600 dark:text-slate-300">New bouncer</p>
               <div className="flex gap-2">
                 <input value={newBouncerName} onChange={(e) => setNewBouncerName(e.target.value)}
-                  placeholder="Nom (ex: traefik-bouncer)"
+                  placeholder="Name (e.g. traefik-bouncer)"
                   className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500/30 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200"
                   onKeyDown={(e) => { if (e.key === 'Enter') void doAddBouncer() }} />
                 <button type="button" onClick={() => void doAddBouncer()} disabled={saving || !newBouncerName.trim()}
                   className="rounded-lg bg-violet-500 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-600 disabled:opacity-40">
-                  {saving ? '…' : 'Créer'}
+                  {saving ? '…' : 'Create'}
                 </button>
               </div>
             </div>
           )}
 
           <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
-            {loading ? <p className="px-5 py-8 text-center text-sm text-slate-400">Chargement…</p>
-              : bouncers.length === 0 ? <p className="px-5 py-8 text-center text-sm text-slate-400">Aucun bouncer enregistré</p>
+            {loading ? <p className="px-5 py-8 text-center text-sm text-slate-400">Loading…</p>
+              : bouncers.length === 0 ? <p className="px-5 py-8 text-center text-sm text-slate-400">No bouncers registered</p>
               : bouncers.map((b) => (
                 <div key={b.name} className="flex items-center gap-3 px-5 py-3">
                   <div className="min-w-0 flex-1">
@@ -387,7 +387,7 @@ export function CrowdSecPage() {
                     </div>
                   </div>
                   <button type="button" onClick={() => void doDeleteBouncer(b.name)}
-                    className="flex-shrink-0 rounded-lg p-1.5 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30" title="Supprimer">
+                    className="flex-shrink-0 rounded-lg p-1.5 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30" title="Delete">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
@@ -406,37 +406,37 @@ export function CrowdSecPage() {
             </h2>
             <button type="button" onClick={() => setShowAddMachine((v) => !v)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-600">
-              <Plus className="h-3 w-3" /> Ajouter
+              <Plus className="h-3 w-3" /> Add
             </button>
           </div>
 
           {showAddMachine && (
             <div className="border-b border-slate-100 bg-slate-50 px-5 py-4 dark:border-slate-700/50 dark:bg-slate-800/40">
-              <p className="mb-2 text-xs font-medium text-slate-600 dark:text-slate-300">Nouvelle machine</p>
+              <p className="mb-2 text-xs font-medium text-slate-600 dark:text-slate-300">New machine</p>
               <div className="space-y-2">
                 <input value={newMachineId} onChange={(e) => setNewMachineId(e.target.value)}
-                  placeholder="ID (ex: crowdefik)"
+                  placeholder="ID (e.g. crowdefik)"
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200" />
                 <div className="flex gap-2">
                   <input type="password" value={newMachinePass} onChange={(e) => setNewMachinePass(e.target.value)}
-                    placeholder="Mot de passe"
+                    placeholder="Password"
                     className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200"
                     onKeyDown={(e) => { if (e.key === 'Enter') void doAddMachine() }} />
                   <button type="button" onClick={() => void doAddMachine()} disabled={saving || !newMachineId.trim() || !newMachinePass.trim()}
                     className="rounded-lg bg-blue-500 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-600 disabled:opacity-40">
-                    {saving ? '…' : 'Créer'}
+                    {saving ? '…' : 'Create'}
                   </button>
                 </div>
                 <p className="text-[11px] text-slate-400">
-                  Après création, configurez l'ID et mot de passe dans <Link to="/settings" className="underline text-blue-500">les paramètres</Link>.
+                  After creation, configure the ID and password in <Link to="/settings" className="underline text-blue-500">settings</Link>.
                 </p>
               </div>
             </div>
           )}
 
           <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
-            {loading ? <p className="px-5 py-8 text-center text-sm text-slate-400">Chargement…</p>
-              : machines.length === 0 ? <p className="px-5 py-8 text-center text-sm text-slate-400">Aucune machine enregistrée</p>
+            {loading ? <p className="px-5 py-8 text-center text-sm text-slate-400">Loading…</p>
+              : machines.length === 0 ? <p className="px-5 py-8 text-center text-sm text-slate-400">No machines registered</p>
               : machines.map((m) => {
                 const id = m.machineId ?? m.machine_id ?? '?'
                 const validated = m.isValidated ?? m.is_validated
@@ -447,9 +447,9 @@ export function CrowdSecPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-sm font-medium text-slate-800 dark:text-slate-100">{id}</span>
                         {validated
-                          ? <StatusBadge active={true} label="Validée" />
+                          ? <StatusBadge active={true} label="Validated" />
                           : <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
-                              <AlertCircle className="h-3 w-3" /> En attente
+                              <AlertCircle className="h-3 w-3" /> Pending
                             </span>}
                       </div>
                       <div className="mt-0.5 flex items-center gap-3 text-[11px] text-slate-400">
@@ -460,12 +460,12 @@ export function CrowdSecPage() {
                     <div className="flex flex-shrink-0 items-center gap-1">
                       {!validated && (
                         <button type="button" onClick={() => void doValidateMachine(id)}
-                          className="rounded-lg p-1.5 text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30" title="Valider">
+                          className="rounded-lg p-1.5 text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30" title="Validate">
                           <CheckCircle2 className="h-3.5 w-3.5" />
                         </button>
                       )}
                       <button type="button" onClick={() => void doDeleteMachine(id)}
-                        className="rounded-lg p-1.5 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30" title="Supprimer">
+                        className="rounded-lg p-1.5 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30" title="Delete">
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -481,7 +481,7 @@ export function CrowdSecPage() {
         <div className="space-y-4">
           {metricsLoading && (
             <div className="flex h-40 items-center justify-center gap-2 text-sm text-slate-400">
-              <RefreshCw className="h-4 w-4 animate-spin" /> Chargement des métriques…
+              <RefreshCw className="h-4 w-4 animate-spin" /> Loading metrics…
             </div>
           )}
 
@@ -489,7 +489,7 @@ export function CrowdSecPage() {
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-500/30 dark:bg-amber-900/20">
               <div className="mb-2 flex items-center gap-2">
                 <Activity className="h-4 w-4 text-amber-500" />
-                <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">Sortie brute cscli</span>
+                <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">Raw cscli output</span>
               </div>
               <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-amber-900 dark:text-amber-200">{metricsRaw}</pre>
             </div>
@@ -511,7 +511,7 @@ export function CrowdSecPage() {
 
           {!metricsLoading && !metrics && !metricsRaw && (
             <div className="flex h-40 items-center justify-center text-sm text-slate-400">
-              Aucune donnée — cliquez sur Actualiser
+              No data — click Refresh
             </div>
           )}
         </div>
@@ -541,8 +541,8 @@ function MetricsSummary({ raw }: { raw: CscliMetrics }) {
     const totalProcessed = engines.reduce((acc, e) => acc + (Number(e.processed ?? e.Processed ?? 0)), 0)
     const totalBlocked = engines.reduce((acc, e) => acc + (Number(e.blocked ?? e.Blocked ?? 0)), 0)
     if (totalProcessed > 0) {
-      cards.push({ label: 'AppSec — traitées', value: num(totalProcessed), color: 'border-blue-500/20 bg-blue-500/5' })
-      cards.push({ label: 'AppSec — bloquées', value: num(totalBlocked), color: 'border-red-500/20 bg-red-500/5' })
+      cards.push({ label: 'AppSec — processed', value: num(totalProcessed), color: 'border-blue-500/20 bg-blue-500/5' })
+      cards.push({ label: 'AppSec — blocked', value: num(totalBlocked), color: 'border-red-500/20 bg-red-500/5' })
     }
   }
 
@@ -552,14 +552,14 @@ function MetricsSummary({ raw }: { raw: CscliMetrics }) {
     const total: number = Array.isArray(decisions)
       ? (decisions as Record<string, unknown>[]).reduce((acc: number, r) => acc + Number(r.count ?? r.Count ?? 0), 0)
       : Object.values(decisions as Record<string, number | unknown>).reduce((acc: number, v) => acc + Number(v), 0)
-    if (total > 0) cards.push({ label: 'Décisions actives', value: num(total), color: 'border-amber-500/20 bg-amber-500/5' })
+    if (total > 0) cards.push({ label: 'Active decisions', value: num(total), color: 'border-amber-500/20 bg-amber-500/5' })
   }
 
   // scenarios
   const scenarios = raw.scenarios as Record<string, unknown>[] | undefined
   if (Array.isArray(scenarios)) {
     const overflows = scenarios.reduce((acc, s) => acc + Number(s.overflows ?? s.Overflows ?? 0), 0)
-    if (overflows > 0) cards.push({ label: 'Scénarios déclenchés', value: num(overflows), color: 'border-violet-500/20 bg-violet-500/5' })
+    if (overflows > 0) cards.push({ label: 'Triggered scenarios', value: num(overflows), color: 'border-violet-500/20 bg-violet-500/5' })
   }
 
   if (cards.length === 0) return null

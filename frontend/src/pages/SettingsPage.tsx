@@ -241,7 +241,7 @@ export function SettingsPage() {
                 onChange={(e) => setForm({ ...form, crowdsec_machine_password: e.target.value })}
               />
             </Field>
-            <Field label="Nom du conteneur Docker CrowdSec"
+            <Field label="CrowdSec Docker container name"
               hint="Used for cscli management (bouncers, machines) via docker exec">
               <input
                 className={inputClass}

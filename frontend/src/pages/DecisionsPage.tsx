@@ -325,7 +325,7 @@ export function DecisionsPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">IP</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Type</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Scenario</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Service ciblé</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Target service</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Until</th>
                 <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-400">Actions</th>
               </tr>

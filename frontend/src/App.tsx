@@ -14,6 +14,7 @@ import { TraefikPage } from './pages/TraefikPage'
 import { CrowdSecPage } from './pages/CrowdSecPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { AuditPage } from './pages/AuditPage'
+import { ServicePage } from './pages/ServicePage'
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { me, loading } = useAuth()
@@ -46,6 +47,7 @@ export default function App() {
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/admin" element={<AdminPage />} />
               <Route path="/audit" element={<AuditPage />} />
+              <Route path="/services/:host" element={<ServicePage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -1,3 +1,5 @@
+import json as _json
+import math
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -254,31 +256,86 @@ def crowdsec_status(
     }
 
 
+@router.get("/alerts/filters")
+def list_alert_filters(
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, list[str]]:
+    """Return distinct scenarios and target hosts for filter dropdowns."""
+    from app.models import StoredAlert
+    from sqlalchemy import distinct as sql_distinct
+
+    hosts = _visible_hosts(db, user)
+    q_sc = db.query(sql_distinct(StoredAlert.scenario)).filter(StoredAlert.scenario != "")
+    q_h = db.query(sql_distinct(StoredAlert.target_host)).filter(StoredAlert.target_host.isnot(None))
+    if hosts is not None:
+        q_sc = q_sc.filter(StoredAlert.target_host.in_(hosts))
+        q_h = q_h.filter(StoredAlert.target_host.in_(hosts))
+
+    return {
+        "scenarios": sorted([r[0].replace("crowdsecurity/", "") for r in q_sc.all() if r[0]]),
+        "hosts": sorted([r[0] for r in q_h.all() if r[0]]),
+    }
+
+
 @router.get("/alerts")
 def list_alerts(
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
-    limit: int = 200,
-) -> list[dict[str, Any]]:
-    s = get_settings()
+    page: int = 1,
+    limit: int = 25,
+    scenario: str | None = None,
+    host: str | None = None,
+    search: str | None = None,
+) -> dict[str, Any]:
+    """Serve alerts from the local DB with server-side pagination and filtering.
 
-    def factory():
-        return crowdsec_client.fetch_alerts_sync(db)
-
-    alerts = cache_mod.get_cached("crowdsec:alerts", factory, ttl_seconds=s.crowdsec_cache_ttl_seconds)
-    hosts = _visible_hosts(db, user)
-    if hosts is None:
-        raw = alerts[:limit]
-    else:
-        raw = [a for a in alerts if blob_matches_hosts(a, hosts)][:limit]
-
-    # Enrich each alert with stored target_host
+    No arbitrary 2000-item cap — returns the full 7-day rolling history.
+    """
     from app.models import StoredAlert
-    ids = [a.get("id") for a in raw if isinstance(a.get("id"), int)]
-    if ids:
-        stored = {r.id: r.target_host for r in db.query(StoredAlert).filter(StoredAlert.id.in_(ids)).all()}
-        for a in raw:
-            a_id = a.get("id")
-            if isinstance(a_id, int) and a_id in stored:
-                a["_target_host"] = stored[a_id]
-    return raw
+    from app.services.sync_service import _extract_target_host
+    from sqlalchemy import or_
+
+    hosts = _visible_hosts(db, user)
+    q = db.query(StoredAlert).order_by(StoredAlert.start_at.desc())
+
+    if hosts is not None:
+        q = q.filter(StoredAlert.target_host.in_(hosts))
+    if scenario:
+        q = q.filter(StoredAlert.scenario.ilike(f"%{scenario}%"))
+    if host:
+        q = q.filter(StoredAlert.target_host == host)
+    if search:
+        s = f"%{search}%"
+        q = q.filter(
+            or_(
+                StoredAlert.source_ip.ilike(s),
+                StoredAlert.scenario.ilike(s),
+                StoredAlert.target_host.ilike(s),
+            )
+        )
+
+    total = q.count()
+    limit = max(1, min(limit, 500))
+    rows = q.offset((page - 1) * limit).limit(limit).all()
+
+    alerts: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            a: dict[str, Any] = _json.loads(row.raw_json)
+        except Exception:
+            a = {"id": row.id, "scenario": row.scenario, "source": {"ip": row.source_ip}}
+
+        a["_target_host"] = row.target_host
+        if not a["_target_host"]:
+            live = _extract_target_host(a)
+            if live:
+                a["_target_host"] = live
+        alerts.append(a)
+
+    return {
+        "total": total,
+        "page": page,
+        "pages": math.ceil(total / limit) if total else 0,
+        "alerts": alerts,
+    }

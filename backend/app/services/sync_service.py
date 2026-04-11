@@ -241,13 +241,18 @@ def backfill_target_hosts(db: Session) -> int:
     2. Traefik log correlation: for WAF/AppSec direct alerts (kind=waf) whose
        context doesn't include the Host header, correlate by attacker IP +
        timestamp against the Traefik access.log.
+
+    The flag `log_enrichment_attempted` is set to True after the second pass
+    (success or failure) so we never re-read the log file for the same alert.
     """
     rows = db.query(StoredAlert).filter(StoredAlert.target_host.is_(None)).all()
     if not rows:
         return 0
 
     updated = 0
-    still_missing: list[StoredAlert] = []
+    # Alerts that still have no host after the fast pass AND haven't been
+    # tried against the Traefik log yet.
+    need_log_correlation: list[StoredAlert] = []
 
     for row in rows:
         try:
@@ -256,49 +261,69 @@ def backfill_target_hosts(db: Session) -> int:
             if host:
                 row.target_host = host
                 updated += 1
-            else:
-                still_missing.append(row)
+            elif not row.log_enrichment_attempted:
+                need_log_correlation.append(row)
         except Exception:
-            still_missing.append(row)
+            if not row.log_enrichment_attempted:
+                need_log_correlation.append(row)
 
     if updated:
         db.commit()
 
-    if still_missing:
-        updated += _backfill_from_traefik_log(db, still_missing)
+    if need_log_correlation:
+        updated += _backfill_from_traefik_log(db, need_log_correlation)
 
     return updated
 
 
 def _backfill_from_traefik_log(db: Session, rows: list[StoredAlert]) -> int:
     """
-    Correlate WAF alerts (no target_host) against the Traefik access.log.
+    Correlate WAF alerts (no target_host, not yet tried) against the Traefik
+    access.log.  Always marks rows as attempted so this is called at most once
+    per alert, regardless of whether a match is found.
 
     Requires CROWDEFIK_TRAEFIK_LOG_PATH to be set and the log file to be
     accessible inside the container (read-only volume mount).
     """
     from app.settings import get_settings
+    from app.integrations.traefik_log_reader import LOOKBACK_HOURS
 
     log_path = get_settings().traefik_log_path
-    if not log_path:
+
+    # Restrict to alerts recent enough to potentially still be in the log.
+    cutoff = datetime.utcnow() - timedelta(hours=LOOKBACK_HOURS)
+    candidates = [r for r in rows if r.start_at and r.start_at >= cutoff]
+
+    # Alerts older than the lookback window: mark attempted so they're never
+    # retried (they'll never appear in the log again).
+    too_old = [r for r in rows if r not in candidates]
+    if too_old:
+        for r in too_old:
+            r.log_enrichment_attempted = True
+        db.commit()
+
+    if not candidates:
         return 0
 
-    try:
-        from app.integrations.traefik_log_reader import build_ip_host_index, find_host_for_alert
-        index = build_ip_host_index(log_path)
-    except Exception as exc:
-        log.warning("Traefik log correlation failed: %s", exc)
-        return 0
-
-    if not index:
-        return 0
+    index: dict = {}
+    if log_path:
+        try:
+            from app.integrations.traefik_log_reader import build_ip_host_index
+            index = build_ip_host_index(log_path)
+        except Exception as exc:
+            log.warning("Traefik log correlation failed: %s", exc)
 
     updated = 0
-    for row in rows:
-        if not row.source_ip or not row.start_at:
+    from app.integrations.traefik_log_reader import find_host_for_alert
+
+    for row in candidates:
+        # Mark as attempted regardless of outcome
+        row.log_enrichment_attempted = True
+
+        if not index or not row.source_ip or not row.start_at:
             continue
 
-        # Extract target_uri from the alert's raw context for better path matching
+        # Extract target_uri from raw context for better path matching
         target_uri: str | None = None
         try:
             data = json.loads(row.raw_json)
@@ -319,8 +344,8 @@ def _backfill_from_traefik_log(db: Session, rows: list[StoredAlert]) -> int:
             row.target_host = host
             updated += 1
 
+    db.commit()
     if updated:
-        db.commit()
         log.info("Traefik log correlation: enriched %d WAF alerts with target host", updated)
 
     return updated

@@ -1,6 +1,6 @@
 import { AlertTriangle, Download, Filter, Info, RefreshCw, Search, Settings, ShieldBan } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { Link, Navigate } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
@@ -63,10 +63,12 @@ function scenarioColor(s: string) {
 }
 
 function ServiceBadge({ host }: { host: string }) {
+  const navigate = useNavigate()
   return (
-    <a
-      href={`https://${host}`} target="_blank" rel="noopener noreferrer"
-      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300 dark:hover:bg-slate-700"
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); navigate(`/services/${encodeURIComponent(host)}`) }}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300 dark:hover:border-violet-500/50 dark:hover:bg-violet-900/20 dark:hover:text-violet-300 transition-colors"
     >
       <img
         src={`https://icons.duckduckgo.com/ip3/${host}.ico`} alt="" width={12} height={12}
@@ -74,7 +76,7 @@ function ServiceBadge({ host }: { host: string }) {
         onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
       />
       {host}
-    </a>
+    </button>
   )
 }
 
@@ -112,16 +114,51 @@ type BanModal = { ip: string } | null
 export function AlertsPage() {
   const { me, loading } = useAuth()
   const [rows, setRows] = useState<Alert[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [fetching, setFetching] = useState(false)
   const [csStatus, setCsStatus] = useState<CrowdsecStatus | null>(null)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [scenarioFilter, setScenarioFilter] = useState('all')
   const [serviceFilter, setServiceFilter] = useState('all')
-  const [page, setPage] = useState(1)
+  const [scenarios, setScenarios] = useState<string[]>([])
+  const [services, setServices] = useState<string[]>([])
   const [banModal, setBanModal] = useState<BanModal>(null)
   const [banDuration, setBanDuration] = useState('24h')
   const [banReason, setBanReason] = useState('manual')
   const [banning, setBanning] = useState(false)
   const [banMsg, setBanMsg] = useState<{ text: string; ok: boolean } | null>(null)
+  // Debounce search input
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 350)
+    return () => clearTimeout(t)
+  }, [search])
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1) }, [debouncedSearch, scenarioFilter, serviceFilter])
+
+  const buildParams = useCallback((overridePage?: number) => {
+    const p = new URLSearchParams({ page: String(overridePage ?? page), limit: String(PAGE_SIZE) })
+    if (debouncedSearch) p.set('search', debouncedSearch)
+    if (scenarioFilter !== 'all') p.set('scenario', scenarioFilter)
+    if (serviceFilter !== 'all') p.set('host', serviceFilter)
+    return p
+  }, [page, debouncedSearch, scenarioFilter, serviceFilter])
+
+  async function loadPage() {
+    setFetching(true)
+    try {
+      const r = await apiFetch(`/api/crowdsec/alerts?${buildParams()}`)
+      if (r.ok) {
+        const data = await r.json() as { total: number; alerts: Alert[] }
+        setRows(data.alerts)
+        setTotal(data.total)
+      }
+    } finally {
+      setFetching(false)
+    }
+  }
 
   async function handleBan() {
     if (!banModal) return
@@ -145,43 +182,45 @@ export function AlertsPage() {
     }
   }
 
+  async function handleExportCSV() {
+    const p = buildParams(1)
+    p.set('limit', '10000')
+    const r = await apiFetch(`/api/crowdsec/alerts?${p}`)
+    if (r.ok) {
+      const data = await r.json() as { alerts: Alert[] }
+      exportCSV(data.alerts, `alerts-${new Date().toISOString().slice(0, 10)}.csv`)
+    }
+  }
+
   async function loadData() {
-    const [alertsRes, statusRes] = await Promise.all([
-      apiFetch('/api/crowdsec/alerts?limit=2000'),
+    const [, statusRes] = await Promise.all([
+      loadPage(),
       apiFetch('/api/crowdsec/status'),
     ])
-    if (alertsRes.ok) setRows((await alertsRes.json()) as Alert[])
     if (statusRes.ok) setCsStatus((await statusRes.json()) as CrowdsecStatus)
   }
 
-  useEffect(() => { void loadData() }, [])
-
-  const scenarios = useMemo(() => {
-    const s = new Set<string>()
-    rows.forEach((a) => { const sc = String(a.scenario ?? '').replace('crowdsecurity/', ''); if (sc) s.add(sc) })
-    return Array.from(s).sort()
-  }, [rows])
-
-  const services = useMemo(() => {
-    const s = new Set<string>()
-    rows.forEach((a) => { if (a._target_host) s.add(a._target_host) })
-    return Array.from(s).sort()
-  }, [rows])
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase()
-    return rows.filter((a) => {
-      const ip = String(a.source?.ip ?? a.source?.value ?? '')
-      const scenario = String(a.scenario ?? '')
-      if (scenarioFilter !== 'all' && !scenario.includes(scenarioFilter)) return false
-      if (serviceFilter !== 'all' && a._target_host !== serviceFilter) return false
-      if (!q) return true
-      return ip.includes(q) || scenario.toLowerCase().includes(q) || (a._target_host ?? '').includes(q)
+  // Load filter options once
+  useEffect(() => {
+    void apiFetch('/api/crowdsec/alerts/filters').then(async (r) => {
+      if (r.ok) {
+        const data = await r.json() as { scenarios: string[]; hosts: string[] }
+        setScenarios(data.scenarios)
+        setServices(data.hosts)
+      }
     })
-  }, [rows, search, scenarioFilter, serviceFilter])
+  }, [])
 
-  useEffect(() => setPage(1), [search, scenarioFilter, serviceFilter])
-  const paged = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page])
+  // Re-fetch when page or filters change
+  useEffect(() => { void loadPage() }, [page, debouncedSearch, scenarioFilter, serviceFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    void apiFetch('/api/crowdsec/status').then(async (r) => {
+      if (r.ok) setCsStatus((await r.json()) as CrowdsecStatus)
+    })
+  }, [])
+
+  const paged = rows
 
   if (!loading && !me) return <Navigate to="/login" replace />
 
@@ -191,11 +230,11 @@ export function AlertsPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Alerts</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {filtered.length} of {rows.length} alerts — click an IP for details
+            {total.toLocaleString()} alert{total !== 1 ? 's' : ''}{fetching ? ' — loading…' : ''}
           </p>
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={() => exportCSV(filtered, `alerts-${new Date().toISOString().slice(0,10)}.csv`)}
+          <button type="button" onClick={() => void handleExportCSV()}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
             <Download className="h-4 w-4" /> Export CSV
           </button>
@@ -213,19 +252,19 @@ export function AlertsPage() {
         <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm dark:border-amber-500/30 dark:bg-amber-900/20">
           <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
           <div className="flex-1 text-amber-800 dark:text-amber-300">
-            <p className="font-semibold">Credentials machine CrowdSec manquants</p>
+            <p className="font-semibold">CrowdSec machine credentials missing</p>
             <p className="mt-0.5 text-xs">
-              Les alertes nécessitent une authentification <em>watcher</em> (machine), pas la clé bouncer.
-              Créez un compte machine et configurez-le dans les paramètres&nbsp;:
+              Alerts require <em>watcher</em> (machine) authentication, not the bouncer key.
+              Create a machine account and configure it in settings:
             </p>
             <pre className="mt-1.5 rounded-lg bg-amber-100/60 px-3 py-2 font-mono text-[11px] dark:bg-amber-900/40">
-              {`docker exec crowdsec cscli machines add crowdefik --password <mot_de_passe>`}
+              {`docker exec crowdsec cscli machines add crowdefik --password <password>`}
             </pre>
             <Link
               to="/settings"
               className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
             >
-              <Settings className="h-3 w-3" /> Configurer dans les paramètres
+              <Settings className="h-3 w-3" /> Configure in settings
             </Link>
           </div>
         </div>
@@ -260,7 +299,7 @@ export function AlertsPage() {
               <tr className="border-b border-slate-100 dark:border-slate-700/50">
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Scenario</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Source IP</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Service ciblé</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Target service</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-slate-400">Events</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Started</th>
                 {me?.is_superuser && <th className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-slate-400" />}
@@ -309,17 +348,19 @@ export function AlertsPage() {
                   </tr>
                 )
               })}
-              {!paged.length && (
+              {!paged.length && !fetching && (
                 <tr>
                   <td colSpan={me?.is_superuser ? 6 : 5} className="px-4 py-12 text-center text-sm text-slate-400">
-                    {rows.length ? 'No alerts match filters' : 'No alerts — check CrowdSec settings and machine credentials'}
+                    {total === 0 && !debouncedSearch && scenarioFilter === 'all' && serviceFilter === 'all'
+                      ? 'No alerts — check CrowdSec settings and machine credentials'
+                      : 'No alerts match filters'}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        <Pagination page={page} total={filtered.length} pageSize={PAGE_SIZE} onChange={setPage} />
+        <Pagination page={page} total={total} pageSize={PAGE_SIZE} onChange={setPage} />
       </div>
 
       {/* Ban IP modal */}

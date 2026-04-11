@@ -300,12 +300,12 @@ export function DashboardPage() {
           <div className="flex items-center gap-2">
             <Activity className="h-4 w-4 text-blue-500" />
             <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-              {days === 1 ? 'Activité — dernières 24h (par heure)' : `Activité — last ${days} days`}
+              {days === 1 ? 'Activity — last 24h (per hour)' : `Activity — last ${days} days`}
             </span>
           </div>
           <div className="flex items-center gap-4 text-[11px]">
-            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-indigo-500" />Alertes</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-red-500" />Bloqués</span>
+            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-indigo-500" />Alerts</span>
+            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-red-500" />Blocked</span>
           </div>
         </div>
         {timeline.length ? (
@@ -336,9 +336,9 @@ export function DashboardPage() {
                 labelStyle={{ color: '#f1f5f9' }}
                 itemStyle={{ color: '#94a3b8' }}
               />
-              <Area type="monotone" dataKey="alerts" name="Alertes" stroke="#6366f1" strokeWidth={2}
+              <Area type="monotone" dataKey="alerts" name="Alerts" stroke="#6366f1" strokeWidth={2}
                 fill="url(#alertGrad)" dot={false} />
-              <Area type="monotone" dataKey="blocked" name="Bloqués" stroke="#ef4444" strokeWidth={2}
+              <Area type="monotone" dataKey="blocked" name="Blocked" stroke="#ef4444" strokeWidth={2}
                 fill="url(#blockedGrad)" dot={false} />
             </AreaChart>
           </ResponsiveContainer>
