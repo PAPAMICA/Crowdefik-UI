@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
+import { usePagePerf } from '../hooks/usePagePerf'
 import { CountryFlag } from '../components/CountryFlag'
 import { IpBadge } from '../components/IpBadge'
 
@@ -153,6 +154,8 @@ export function DecisionsPage() {
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [page, setPage] = useState(1)
+  const [fetchingData, setFetchingData] = useState(true)
+  usePagePerf('Decisions', fetchingData)
   const [unbanning, setUnbanning] = useState<number | null>(null)
   const [showBanForm, setShowBanForm] = useState(false)
   const [banIp, setBanIp] = useState('')
@@ -186,8 +189,13 @@ export function DecisionsPage() {
   }
 
   async function loadData() {
-    const res = await apiFetch('/api/crowdsec/decisions?limit=2000')
-    if (res.ok) setRows((await res.json()) as Decision[])
+    setFetchingData(true)
+    try {
+      const res = await apiFetch('/api/crowdsec/decisions?limit=2000')
+      if (res.ok) setRows((await res.json()) as Decision[])
+    } finally {
+      setFetchingData(false)
+    }
   }
 
   useEffect(() => { void loadData() }, [])

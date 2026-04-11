@@ -5,6 +5,7 @@ import {
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api'
+import { usePagePerf } from '../hooks/usePagePerf'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -151,6 +152,7 @@ export function CrowdSecPage() {
   const [metrics, setMetrics] = useState<CscliMetrics | null>(null)
   const [metricsRaw, setMetricsRaw] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  usePagePerf('CrowdSec', loading)
   const [metricsLoading, setMetricsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

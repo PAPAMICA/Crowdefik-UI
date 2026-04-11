@@ -4,6 +4,7 @@ import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
+import { usePagePerf } from '../hooks/usePagePerf'
 
 function exportCSV(rows: Alert[], filename: string) {
   const headers = ['ID', 'Scenario', 'Source IP', 'Country', 'Service', 'Events', 'Started']
@@ -158,6 +159,7 @@ export function AlertsPage() {
   const [banReason, setBanReason] = useState('manual')
   const [banning, setBanning] = useState(false)
   const [banMsg, setBanMsg] = useState<{ text: string; ok: boolean } | null>(null)
+  usePagePerf('Alerts', fetching)
   // Debounce search input
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 350)

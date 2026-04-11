@@ -39,6 +39,7 @@ class InstanceSettingsOut(BaseModel):
     crowdsec_machine_id: str | None
     has_crowdsec_machine_password: bool
     crowdsec_container_name: str | None
+    traefik_container_name: str | None
 
 
 class InstanceSettingsUpdateIn(BaseModel):
@@ -51,6 +52,7 @@ class InstanceSettingsUpdateIn(BaseModel):
     crowdsec_machine_id: str | None = None
     crowdsec_machine_password: str | None = None
     crowdsec_container_name: str | None = None
+    traefik_container_name: str | None = None
 
 
 class CrowdsecToggleIn(BaseModel):

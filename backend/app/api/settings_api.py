@@ -26,6 +26,7 @@ def _row_to_out(row) -> InstanceSettingsOut:
         crowdsec_machine_id=getattr(row, "crowdsec_machine_id", None) or None,
         has_crowdsec_machine_password=bool(getattr(row, "crowdsec_machine_pass_enc", None)),
         crowdsec_container_name=getattr(row, "crowdsec_container_name", None) or "crowdsec",
+        traefik_container_name=getattr(row, "traefik_container_name", None) or "traefik",
     )
 
 
@@ -67,6 +68,8 @@ def put_settings_api(
             invalidate_jwt_cache(db)
         if body.crowdsec_container_name is not None:
             row.crowdsec_container_name = body.crowdsec_container_name or "crowdsec"
+        if body.traefik_container_name is not None:
+            row.traefik_container_name = body.traefik_container_name or "traefik"
     except Exception:
         pass  # Column not yet migrated — will work after container restart
     db.add(row)

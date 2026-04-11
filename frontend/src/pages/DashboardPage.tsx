@@ -9,6 +9,7 @@ import { apiFetch, getToken, wsDashboardUrl } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
 import { Skeleton, SkeletonCard } from '../components/Skeleton'
+import { usePagePerf } from '../hooks/usePagePerf'
 
 const AttackerMap = lazy(() => import('../components/AttackerMap').then((m) => ({ default: m.AttackerMap })))
 
@@ -50,6 +51,7 @@ export function DashboardPage() {
   const [loadingSummary, setLoadingSummary] = useState(true)
   const [loadingTimeline, setLoadingTimeline] = useState(true)
   const [loadingServices, setLoadingServices] = useState(true)
+  usePagePerf('Dashboard', loadingSummary || loadingTimeline || loadingServices)
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [days, setDays] = useState(7)

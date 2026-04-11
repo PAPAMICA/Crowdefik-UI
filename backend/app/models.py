@@ -49,6 +49,8 @@ class InstanceSettings(Base):
     crowdsec_machine_pass_enc = mapped_column(Text, nullable=True)
     # Docker container name for cscli management (default: "crowdsec")
     crowdsec_container_name = mapped_column(String(256), nullable=True, default="crowdsec")
+    # Docker container name for reading Traefik logs via docker exec (default: "traefik")
+    traefik_container_name = mapped_column(String(256), nullable=True, default="traefik")
     updated_at = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 

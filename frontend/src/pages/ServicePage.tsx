@@ -12,6 +12,7 @@ import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
 import { Skeleton, SkeletonCard, SkeletonRow } from '../components/Skeleton'
+import { usePagePerf } from '../hooks/usePagePerf'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -117,6 +118,8 @@ export function ServicePage() {
   const [logsData, setLogsData] = useState<LogsData | null>(null)
   const [loadingOverview, setLoadingOverview] = useState(true)
   const [loadingLogs, setLoadingLogs] = useState(true)
+  const decodedHost = host ? decodeURIComponent(host) : 'Service'
+  usePagePerf(decodedHost, loadingOverview || loadingLogs)
   const [logSearch, setLogSearch] = useState('')
   const [logTab, setLogTab] = useState<'all' | '2xx' | '3xx' | '4xx' | '5xx'>('all')
 

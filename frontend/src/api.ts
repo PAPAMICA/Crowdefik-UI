@@ -21,6 +21,10 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   const t0 = performance.now()
   const res = await fetch(`${apiBase()}${path}`, { ...init, headers })
   const ms = Math.round(performance.now() - t0)
+  // Record in the global perf tracker (used by usePagePerf summaries)
+  const { recordFetch } = await import('./perf')
+  recordFetch(path, ms, res.ok, t0)
+  // Per-request debug log
   const label = path.split('?')[0]
   const color = ms > 2000 ? '#ef4444' : ms > 500 ? '#f97316' : '#22c55e'
   // eslint-disable-next-line no-console

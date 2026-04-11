@@ -1,12 +1,14 @@
-import { RefreshCw, Search, Server } from 'lucide-react'
+import { Clock, RefreshCw, Search, Server } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { Skeleton } from '../components/Skeleton'
+import { TimeRangePicker } from '../components/TimeRangePicker'
+import { usePagePerf } from '../hooks/usePagePerf'
 
 type LogEntry = { time: string; level: string; msg: string; raw: string }
-type Data = { available: boolean; total: number; page: number; pages: number; entries: LogEntry[] }
+type Data = { available: boolean; total: number; page: number; pages: number; minutes: number; source?: string; entries: LogEntry[] }
 
 const LEVEL_COLORS: Record<string, string> = {
   error: 'text-red-600 dark:text-red-400 font-semibold',
@@ -27,6 +29,8 @@ export function LogsTraefikPage() {
   const { me, loading } = useAuth()
   const [data, setData] = useState<Data | null>(null)
   const [fetching, setFetching] = useState(true)
+  usePagePerf('Logs / Traefik', fetching)
+  const [minutes, setMinutes] = useState(20)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -36,12 +40,12 @@ export function LogsTraefikPage() {
     const t = setTimeout(() => setDebouncedSearch(search), 350)
     return () => clearTimeout(t)
   }, [search])
-  useEffect(() => { setPage(1) }, [debouncedSearch, levelFilter])
+  useEffect(() => { setPage(1) }, [debouncedSearch, levelFilter, minutes])
 
   async function load() {
     setFetching(true)
     try {
-      const p = new URLSearchParams({ page: String(page), limit: '500' })
+      const p = new URLSearchParams({ page: String(page), limit: '500', minutes: String(minutes) })
       if (debouncedSearch) p.set('search', debouncedSearch)
       if (levelFilter) p.set('level', levelFilter)
       const r = await apiFetch(`/api/logs/traefik?${p}`)
@@ -49,9 +53,11 @@ export function LogsTraefikPage() {
     } finally { setFetching(false) }
   }
 
-  useEffect(() => { void load() }, [page, debouncedSearch, levelFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void load() }, [page, debouncedSearch, levelFilter, minutes]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!loading && !me) return <Navigate to="/login" replace />
+
+  const rangeLabel = minutes === 0 ? 'all time' : minutes < 60 ? `last ${minutes} min` : `last ${minutes / 60}h`
 
   return (
     <div className="space-y-6">
@@ -59,13 +65,22 @@ export function LogsTraefikPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Traefik logs</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Traefik application log — {data?.total?.toLocaleString() ?? '…'} lines{fetching ? ' (loading…)' : ''}
+            Traefik application log — {fetching ? '…' : data?.total?.toLocaleString() ?? '0'} lines ({rangeLabel})
+            {data?.source === 'docker' && (
+              <span className="ml-2 rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">docker exec</span>
+            )}
+            {data?.source === 'file' && (
+              <span className="ml-2 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">file</span>
+            )}
           </p>
         </div>
-        <button type="button" onClick={() => void load()}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-          <RefreshCw className="h-4 w-4" /> Refresh
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <TimeRangePicker value={minutes} onChange={(m) => setMinutes(m)} />
+          <button type="button" onClick={() => void load()}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            <RefreshCw className={`h-4 w-4 ${fetching ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3">
@@ -86,30 +101,42 @@ export function LogsTraefikPage() {
           <div className="px-5 py-16 text-center">
             <Server className="mx-auto mb-3 h-10 w-10 text-slate-300 dark:text-slate-600" />
             <p className="font-medium text-slate-500">Traefik logs not available</p>
-            <p className="mt-1 text-sm text-slate-400">
-              Set <code className="rounded bg-slate-100 px-1 dark:bg-slate-700">CROWDEFIK_TRAEFIK_APP_LOG_PATH</code> and mount the log file.
+            <p className="mt-1 text-xs text-slate-400 max-w-sm mx-auto">
+              Set the <strong>Traefik container name</strong> in Settings → Logs,<br />
+              or mount the log file and set <code className="rounded bg-slate-100 px-1 dark:bg-slate-700">CROWDEFIK_TRAEFIK_APP_LOG_PATH</code>.
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-slate-100 dark:divide-slate-700/30">
-            {fetching && !data
-              ? Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="flex gap-3 px-4 py-2.5">
-                  <Skeleton className="h-4 w-16" />
-                  <Skeleton className="h-4 w-12" />
-                  <Skeleton className="h-4 flex-1" />
-                </div>
-              ))
-              : (data?.entries ?? []).map((e, i) => (
-                <div key={i} className={`flex items-start gap-3 px-4 py-2 font-mono text-xs ${LEVEL_BG[e.level] ?? ''}`}>
-                  <span className="w-36 flex-shrink-0 text-slate-400 whitespace-nowrap">
-                    {e.time ? new Date(e.time).toLocaleString() : '—'}
-                  </span>
-                  <span className={`w-14 flex-shrink-0 uppercase ${LEVEL_COLORS[e.level] ?? 'text-slate-500'}`}>{e.level}</span>
-                  <span className="min-w-0 flex-1 break-words text-slate-700 dark:text-slate-300">{e.msg || e.raw}</span>
-                </div>
-              ))}
-          </div>
+          <>
+            {data && minutes > 0 && (
+              <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2 text-xs text-slate-500 dark:border-slate-700/50 dark:bg-slate-800/40">
+                <Clock className="h-3.5 w-3.5 text-blue-400" />
+                Showing entries from the <strong className="text-slate-700 dark:text-slate-300">last {minutes < 60 ? `${minutes} minutes` : `${minutes / 60} hour${minutes > 60 ? 's' : ''}`}</strong>.
+                <button type="button" className="ml-1 text-blue-500 hover:underline" onClick={() => setMinutes(0)}>Load all</button>
+              </div>
+            )}
+            <div className="divide-y divide-slate-100 dark:divide-slate-700/30">
+              {fetching && !data
+                ? Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="flex gap-3 px-4 py-2.5">
+                    <Skeleton className="h-4 w-16" />
+                    <Skeleton className="h-4 w-12" />
+                    <Skeleton className="h-4 flex-1" />
+                  </div>
+                ))
+                : (data?.entries ?? []).length === 0
+                  ? <div className="py-12 text-center text-sm text-slate-400">No entries in this time range — try a wider window</div>
+                  : (data?.entries ?? []).map((e, i) => (
+                    <div key={i} className={`flex items-start gap-3 px-4 py-2 font-mono text-xs ${LEVEL_BG[e.level] ?? ''}`}>
+                      <span className="w-36 flex-shrink-0 text-slate-400 whitespace-nowrap">
+                        {e.time ? new Date(e.time).toLocaleString() : '—'}
+                      </span>
+                      <span className={`w-14 flex-shrink-0 uppercase ${LEVEL_COLORS[e.level] ?? 'text-slate-500'}`}>{e.level}</span>
+                      <span className="min-w-0 flex-1 break-words text-slate-700 dark:text-slate-300">{e.msg || e.raw}</span>
+                    </div>
+                  ))}
+            </div>
+          </>
         )}
 
         {data && data.pages > 1 && (

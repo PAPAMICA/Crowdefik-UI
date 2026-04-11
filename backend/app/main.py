@@ -80,6 +80,10 @@ _MIGRATIONS: list[tuple[str, str]] = [
         "SELECT log_enrichment_attempted FROM stored_alerts LIMIT 1",
         "ALTER TABLE stored_alerts ADD COLUMN log_enrichment_attempted BOOLEAN NOT NULL DEFAULT 0",
     ),
+    (
+        "SELECT traefik_container_name FROM instance_settings LIMIT 1",
+        "ALTER TABLE instance_settings ADD COLUMN traefik_container_name VARCHAR(256) DEFAULT 'traefik'",
+    ),
 ]
 
 
