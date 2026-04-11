@@ -223,7 +223,6 @@ export function SettingsPage() {
         {/* ── Left navigation ─────────────────────────────────────────── */}
         <nav className="flex w-44 shrink-0 flex-col gap-1">
           {TABS.map(({ id, label, icon: Icon, color, testKey }) => {
-            const testRes = testKey ? tests[testKey] ?? null : null
             const active = id === tab
             return (
               <button
