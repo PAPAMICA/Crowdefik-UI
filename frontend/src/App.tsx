@@ -15,6 +15,9 @@ import { CrowdSecPage } from './pages/CrowdSecPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { AuditPage } from './pages/AuditPage'
 import { ServicePage } from './pages/ServicePage'
+import { LogsAccessPage } from './pages/LogsAccessPage'
+import { LogsTraefikPage } from './pages/LogsTraefikPage'
+import { LogsCrowdSecPage } from './pages/LogsCrowdSecPage'
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { me, loading } = useAuth()
@@ -48,6 +51,9 @@ export default function App() {
               <Route path="/admin" element={<AdminPage />} />
               <Route path="/audit" element={<AuditPage />} />
               <Route path="/services/:host" element={<ServicePage />} />
+              <Route path="/logs/access" element={<LogsAccessPage />} />
+              <Route path="/logs/traefik" element={<LogsTraefikPage />} />
+              <Route path="/logs/crowdsec" element={<LogsCrowdSecPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

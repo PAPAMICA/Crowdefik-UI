@@ -21,10 +21,13 @@ class Settings(BaseSettings):
     crowdsec_middleware: str = "crowdsec@file"
 
     # Path to the Traefik JSON access.log inside the container.
-    # Used to correlate WAF/AppSec alerts (kind=waf) with their target hostname
-    # when CrowdSec doesn't include the Host header in the alert context.
-    # Mount the log directory read-only and set this to the file path.
     traefik_log_path: Path | None = None
+
+    # Path to the Traefik application log (traefik.log, text format).
+    traefik_app_log_path: Path | None = None
+
+    # Path to the CrowdSec log file inside the container.
+    crowdsec_log_path: Path | None = None
 
     cache_ttl_seconds: int = 60 * 60 * 2
     crowdsec_cache_ttl_seconds: int = 60

@@ -4,10 +4,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  FileText,
   GanttChartSquare,
   LayoutDashboard,
   LogOut,
   Route,
+  ScrollText,
   Settings,
   Shield,
   ShieldAlert,
@@ -28,6 +30,12 @@ const NAV = [
 const INFRA_NAV = [
   { to: '/traefik', icon: Route, label: 'Traefik', color: 'text-cyan-500' },
   { to: '/crowdsec', icon: Bot, label: 'CrowdSec', color: 'text-emerald-500' },
+]
+
+const LOGS_NAV = [
+  { to: '/logs/access', icon: ScrollText, label: 'Access logs', color: 'text-blue-400' },
+  { to: '/logs/traefik', icon: Route, label: 'Traefik logs', color: 'text-cyan-400' },
+  { to: '/logs/crowdsec', icon: FileText, label: 'CrowdSec logs', color: 'text-emerald-400' },
 ]
 
 const ADMIN_NAV = [
@@ -88,6 +96,19 @@ export function Sidebar({ collapsed, onToggle }: Props) {
         </div>
         <div className="space-y-1">
           {INFRA_NAV.map(({ to, icon: Icon, label, color }) => (
+            <NavLink key={to} to={to} className={linkClass} title={collapsed ? label : undefined}>
+              <Icon className={`h-4 w-4 shrink-0 ${color}`} />
+              {!collapsed && <span>{label}</span>}
+            </NavLink>
+          ))}
+        </div>
+
+        {/* Logs section — visible to all */}
+        <div className={['mt-4 mb-2 px-3 text-[10px] uppercase tracking-widest text-slate-500', collapsed ? 'text-center' : ''].join(' ')}>
+          {collapsed ? '···' : 'Logs'}
+        </div>
+        <div className="space-y-1">
+          {LOGS_NAV.map(({ to, icon: Icon, label, color }) => (
             <NavLink key={to} to={to} className={linkClass} title={collapsed ? label : undefined}>
               <Icon className={`h-4 w-4 shrink-0 ${color}`} />
               {!collapsed && <span>{label}</span>}

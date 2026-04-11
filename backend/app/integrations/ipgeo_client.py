@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 def geolocate_ip(ip: str) -> dict[str, Any] | None:
     """Free geolocation via ip-api.com (no key, max 45 req/min)."""
     try:
-        with httpx.Client(timeout=8.0) as client:
+        with httpx.Client(timeout=3.0) as client:
             r = client.get(
                 f"http://ip-api.com/json/{ip}",
                 params={"fields": "status,country,countryCode,regionName,city,lat,lon,isp,org,as,query"},

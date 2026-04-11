@@ -339,3 +339,38 @@ def list_alerts(
         "pages": math.ceil(total / limit) if total else 0,
         "alerts": alerts,
     }
+
+
+@router.post("/alerts/{alert_id}/enrich")
+def enrich_alert(
+    alert_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    _user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, str | None]:
+    """Force target_host discovery for a single alert via Traefik log correlation."""
+    from app.models import StoredAlert
+    from app.services.sync_service import _backfill_from_traefik_log, _extract_target_host
+
+    row = db.query(StoredAlert).filter(StoredAlert.id == alert_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    # Try cheap in-memory extraction first
+    try:
+        raw = _json.loads(row.raw_json)
+    except Exception:
+        raw = {}
+    host = _extract_target_host(raw)
+
+    if not host:
+        # Force Traefik log correlation by resetting the flag
+        row.log_enrichment_attempted = False
+        db.commit()
+        _backfill_from_traefik_log(db, [row])
+        db.refresh(row)
+        host = row.target_host
+    else:
+        row.target_host = host
+        db.commit()
+
+    return {"id": str(alert_id), "target_host": host}

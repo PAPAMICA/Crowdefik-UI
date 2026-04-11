@@ -97,7 +97,12 @@ def summary(
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, Any]:
-    return compute_dashboard_summary(db, user)
+    # Cache per user to avoid repeated Traefik API + DB queries (60 s TTL).
+    return cache_mod.get_cached(
+        f"dashboard:summary:{user.id}",
+        lambda: compute_dashboard_summary(db, user),
+        ttl_seconds=60,
+    )
 
 
 @router.get("/timeline")
@@ -106,40 +111,60 @@ def timeline(
     user: Annotated[User, Depends(get_current_user)],
     days: int = 7,
 ) -> list[dict[str, Any]]:
-    """Alert + blocked-IP counts per slot (hourly for 1 day, daily otherwise)."""
+    """Alert + blocked-IP counts per slot (hourly for 1 day, daily otherwise).
+
+    Uses two GROUP BY SQL queries instead of N × 2 individual COUNT queries
+    for a significant speed-up on large datasets.
+    """
     days = max(1, min(days, 90))
-    hourly = days == 1
-    now = datetime.utcnow()
 
-    # Build per-user host filter
-    hosts: set[str] | None = None
-    if not user.is_superuser:
-        allowed = allowed_router_names(db, user)
-        raw_r = cache_mod.get_cached("traefik:routers", lambda: traefik_client.fetch_routers_sync(db))
-        rows_v = filter_rows_for_user(build_router_rows(raw_r), is_superuser=False, allowed_routers=allowed)
-        hosts = hosts_from_rules(rows_v)
+    def _build():
+        hourly = days == 1
+        now = datetime.utcnow()
+        cutoff = now - timedelta(hours=24) if hourly else now - timedelta(days=days)
+        slots = 24 if hourly else days
 
-    result = []
-    slots = 24 if hourly else days
-    for i in range(slots - 1, -1, -1):
-        if hourly:
-            start = (now - timedelta(hours=i + 1)).replace(minute=0, second=0, microsecond=0)
-            end = start + timedelta(hours=1)
-            label = start.strftime("%H:%M")
-        else:
-            d = date.today() - timedelta(days=i)
-            start = datetime(d.year, d.month, d.day, 0, 0, 0)
-            end = start + timedelta(days=1)
-            label = d.isoformat()
+        # Per-user host filter (scope)
+        hosts: set[str] | None = None
+        if not user.is_superuser:
+            allowed = allowed_router_names(db, user)
+            raw_r = cache_mod.get_cached("traefik:routers", lambda: traefik_client.fetch_routers_sync(db))
+            rows_v = filter_rows_for_user(build_router_rows(raw_r), is_superuser=False, allowed_routers=allowed)
+            hosts = hosts_from_rules(rows_v)
 
-        aq = db.query(StoredAlert).filter(StoredAlert.synced_at >= start, StoredAlert.synced_at < end)
-        dq = db.query(StoredDecision).filter(StoredDecision.synced_at >= start, StoredDecision.synced_at < end)
+        # SQLite strftime format for grouping — includes date so hours don't collide across days
+        slot_fmt = '%Y-%m-%d %H:00' if hourly else '%Y-%m-%d'
+
+        a_q = (
+            db.query(func.strftime(slot_fmt, StoredAlert.synced_at).label('slot'),
+                     func.count(StoredAlert.id).label('cnt'))
+            .filter(StoredAlert.synced_at >= cutoff)
+        )
+        d_q = (
+            db.query(func.strftime(slot_fmt, StoredDecision.synced_at).label('slot'),
+                     func.count(StoredDecision.id).label('cnt'))
+            .filter(StoredDecision.synced_at >= cutoff)
+        )
         if hosts:
-            aq = aq.filter(StoredAlert.source_ip.in_(list(hosts)))
-            dq = dq.filter(StoredDecision.ip_value.in_(list(hosts)))
+            a_q = a_q.filter(StoredAlert.target_host.in_(hosts))
 
-        result.append({"date": label, "alerts": aq.count(), "blocked": dq.count()})
-    return result
+        alert_map: dict[str, int] = {r.slot: r.cnt for r in a_q.group_by('slot').all()}
+        blocked_map: dict[str, int] = {r.slot: r.cnt for r in d_q.group_by('slot').all()}
+
+        result = []
+        for i in range(slots - 1, -1, -1):
+            if hourly:
+                slot_start = (now - timedelta(hours=i + 1)).replace(minute=0, second=0, microsecond=0)
+                key = slot_start.strftime('%Y-%m-%d %H:00')
+                label = slot_start.strftime('%H:%M')
+            else:
+                d = date.today() - timedelta(days=i)
+                key = d.isoformat()
+                label = d.isoformat()
+            result.append({'date': label, 'alerts': alert_map.get(key, 0), 'blocked': blocked_map.get(key, 0)})
+        return result
+
+    return cache_mod.get_cached(f"dashboard:timeline:{user.id}:{days}", _build, ttl_seconds=60)
 
 
 @router.get("/geo")
@@ -192,48 +217,39 @@ def service_stats(
     user: Annotated[User, Depends(get_current_user)],
     days: int = 7,
 ) -> dict[str, Any]:
-    """
-    Per-service breakdown of alerts (last N days) and correlated decisions.
-    Uses target_host extracted from CrowdSec alert events' http_host metadata.
-    """
     days = max(1, min(days, 90))
-    cutoff = datetime.utcnow() - timedelta(days=days)
 
-    # ── Alerts per service ───────────────────────────────────
-    alert_q = (
-        db.query(StoredAlert.target_host, func.count(StoredAlert.id).label("alert_count"))
-        .filter(StoredAlert.synced_at >= cutoff, StoredAlert.target_host.isnot(None))
-        .group_by(StoredAlert.target_host)
-    )
+    def _build() -> dict[str, Any]:
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        alert_q = (
+            db.query(StoredAlert.target_host, func.count(StoredAlert.id).label("alert_count"))
+            .filter(StoredAlert.synced_at >= cutoff, StoredAlert.target_host.isnot(None))
+            .group_by(StoredAlert.target_host)
+        )
+        if not user.is_superuser:
+            allowed = allowed_router_names(db, user)
+            raw_r = cache_mod.get_cached("traefik:routers", lambda: traefik_client.fetch_routers_sync(db))
+            rows_v = filter_rows_for_user(build_router_rows(raw_r), is_superuser=False, allowed_routers=allowed)
+            hosts = hosts_from_rules(rows_v)
+            if hosts:
+                alert_q = alert_q.filter(StoredAlert.target_host.in_(list(hosts)))
 
-    if not user.is_superuser:
-        allowed = allowed_router_names(db, user)
-        raw_r = cache_mod.get_cached("traefik:routers", lambda: traefik_client.fetch_routers_sync(db))
-        from app.services.routers_view import build_router_rows, filter_rows_for_user
-        rows_v = filter_rows_for_user(build_router_rows(raw_r), is_superuser=False, allowed_routers=allowed)
-        from app.services.scope_filter import hosts_from_rules
-        hosts = hosts_from_rules(rows_v)
-        if hosts:
-            alert_q = alert_q.filter(StoredAlert.target_host.in_(list(hosts)))
+        alerts_by_service = [
+            {"host": host or "unknown", "alert_count": count, "favicon": f"https://icons.duckduckgo.com/ip3/{host}.ico" if host else None}
+            for host, count in alert_q.order_by(func.count(StoredAlert.id).desc()).limit(20).all()
+        ]
+        ip_q = (
+            db.query(StoredAlert.target_host, func.count(func.distinct(StoredAlert.source_ip)).label("ip_count"))
+            .filter(StoredAlert.synced_at >= cutoff, StoredAlert.target_host.isnot(None), StoredAlert.source_ip.isnot(None))
+            .group_by(StoredAlert.target_host)
+            .all()
+        )
+        ip_map = {h: c for h, c in ip_q}
+        for s in alerts_by_service:
+            s["unique_ips"] = ip_map.get(s["host"], 0)
+        return {"by_service": alerts_by_service}
 
-    alerts_by_service = [
-        {"host": host or "unknown", "alert_count": count, "favicon": f"https://icons.duckduckgo.com/ip3/{host}.ico" if host else None}
-        for host, count in alert_q.order_by(func.count(StoredAlert.id).desc()).limit(20).all()
-    ]
-
-    # ── Unique attacker IPs per service ──────────────────────
-    ip_q = (
-        db.query(StoredAlert.target_host, func.count(func.distinct(StoredAlert.source_ip)).label("ip_count"))
-        .filter(StoredAlert.synced_at >= cutoff, StoredAlert.target_host.isnot(None), StoredAlert.source_ip.isnot(None))
-        .group_by(StoredAlert.target_host)
-        .all()
-    )
-    ip_map = {host: count for host, count in ip_q}
-
-    for s in alerts_by_service:
-        s["unique_ips"] = ip_map.get(s["host"], 0)
-
-    return {"by_service": alerts_by_service}
+    return cache_mod.get_cached(f"dashboard:service-stats:{user.id}:{days}", _build, ttl_seconds=60)
 
 
 @router.post("/sync")

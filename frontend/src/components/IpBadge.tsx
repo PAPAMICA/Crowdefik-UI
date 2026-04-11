@@ -1,5 +1,5 @@
 import { AlertTriangle, Globe, Info, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../api'
 import { CountryFlag } from './CountryFlag'
 
@@ -141,12 +141,22 @@ async function fetchIpInfo(ip: string): Promise<IpInfo | null> {
 export function IpBadge({ ip }: { ip: string }) {
   const [open, setOpen] = useState(false)
   const [info, setInfo] = useState<IpInfo | null>(() => cache.get(ip) ?? null)
+  const [hovered, setHovered] = useState(false)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Auto-fetch on mount so flag + score appear inline
+  // Lazy fetch — only triggered on first hover to avoid mass requests on mount
   useEffect(() => {
-    if (info) return
+    if (!hovered || info) return
     void fetchIpInfo(ip).then((d) => { if (d) setInfo(d) })
-  }, [ip]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hovered, ip, info])
+
+  function handleMouseEnter() {
+    if (info) return
+    hoverTimer.current = setTimeout(() => setHovered(true), 150)
+  }
+  function handleMouseLeave() {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+  }
 
   const cc = info?.abuse?.countryCode || info?.geo?.countryCode || ''
   const score = info?.abuse?.abuseConfidenceScore ?? null
@@ -156,23 +166,18 @@ export function IpBadge({ ip }: { ip: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
         className="group inline-flex items-center gap-1.5 font-mono text-xs text-slate-700 hover:text-violet-600 dark:text-slate-300 dark:hover:text-violet-400"
         title="Click for full IP details"
       >
-        {/* Country flag */}
         {cc && <CountryFlag code={cc} size={16} />}
-
-        {/* IP address */}
         <span>{ip}</span>
-
-        {/* Abuse score pill */}
         {score !== null && (
           <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold leading-tight ${scoreClasses(score)}`}>
             {score}%
           </span>
         )}
-
-        {/* Subtle info icon */}
         <Info className="h-3 w-3 opacity-0 transition group-hover:opacity-60" />
       </button>
 

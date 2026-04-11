@@ -18,10 +18,14 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   if (!headers.has('Content-Type') && init.body && !(init.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json')
   }
+  const t0 = performance.now()
   const res = await fetch(`${apiBase()}${path}`, { ...init, headers })
-  if (res.status === 401) {
-    setToken(null)
-  }
+  const ms = Math.round(performance.now() - t0)
+  const label = path.split('?')[0]
+  const color = ms > 2000 ? '#ef4444' : ms > 500 ? '#f97316' : '#22c55e'
+  // eslint-disable-next-line no-console
+  console.debug(`%c[Perf]%c ${label} %c${ms}ms`, 'color:#6366f1;font-weight:bold', 'color:#94a3b8', `color:${color};font-weight:bold`)
+  if (res.status === 401) setToken(null)
   return res
 }
 

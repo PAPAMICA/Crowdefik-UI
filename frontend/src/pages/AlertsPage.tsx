@@ -1,4 +1,4 @@
-import { AlertTriangle, Download, Filter, Info, RefreshCw, Search, Settings, ShieldBan } from 'lucide-react'
+import { AlertTriangle, Download, Filter, Info, Loader2, RefreshCw, Search, Settings, ShieldBan } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { apiFetch } from '../api'
@@ -110,6 +110,35 @@ function Pagination({ page, total, pageSize, onChange }: { page: number; total: 
 }
 
 type BanModal = { ip: string } | null
+
+function EnrichButton({ alertId, onEnriched }: { alertId: number; onEnriched: (host: string) => void }) {
+  const [loading, setLoading] = useState(false)
+  async function handle() {
+    setLoading(true)
+    try {
+      const r = await apiFetch(`/api/crowdsec/alerts/${alertId}/enrich`, { method: 'POST' })
+      if (r.ok) {
+        const data = await r.json() as { target_host?: string }
+        if (data.target_host) onEnriched(data.target_host)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={handle}
+      disabled={loading}
+      title="Search target service in Traefik logs"
+      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700/40 dark:text-slate-400 dark:hover:border-violet-500/50 transition-colors"
+    >
+      {loading
+        ? <Loader2 className="h-3 w-3 animate-spin" />
+        : <Search className="h-3 w-3" />}
+    </button>
+  )
+}
 
 export function AlertsPage() {
   const { me, loading } = useAuth()
@@ -327,7 +356,11 @@ export function AlertsPage() {
                     <td className="px-4 py-3">
                       {a._target_host
                         ? <ServiceBadge host={a._target_host} />
-                        : <span className="text-xs text-slate-400">—</span>}
+                        : typeof a.id === 'number'
+                          ? <EnrichButton alertId={a.id} onEnriched={(host) => {
+                              setRows((prev) => prev.map((r) => r.id === a.id ? { ...r, _target_host: host } : r))
+                            }} />
+                          : <span className="text-xs text-slate-400">—</span>}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium dark:bg-slate-700 dark:text-slate-300">{events}</span>

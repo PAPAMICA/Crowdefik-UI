@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, audit_api, auth, cache_refresh, crowdsec_api, dashboard, ip_info, profile_api, routers_api, services_api, settings_api, test_connections, traefik_api, ws
+from app.api import admin, audit_api, auth, cache_refresh, crowdsec_api, dashboard, ip_info, logs_api, profile_api, routers_api, services_api, settings_api, test_connections, traefik_api, ws
 from app.core.security import hash_password
 from app.db import SessionLocal, engine
 from app.models import Base, User
@@ -158,6 +158,7 @@ def create_app() -> FastAPI:
     app.include_router(cache_refresh.router, prefix="/api")
     app.include_router(test_connections.router, prefix="/api")
     app.include_router(services_api.router, prefix="/api")
+    app.include_router(logs_api.router, prefix="/api")
     app.include_router(ip_info.router, prefix="/api")
     app.include_router(ws.router)
 
