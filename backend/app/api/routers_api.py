@@ -1,5 +1,7 @@
+import re
 from typing import Annotated, Literal
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -25,6 +27,16 @@ class CrowdsecActionIn(BaseModel):
     action: Literal["enable", "disable", "reset"]
 
 
+class BulkActionIn(BaseModel):
+    action: Literal["enable", "disable", "reset"]
+
+
+def _extract_host_from_rule(rule: str) -> str | None:
+    """Extract first hostname from a Traefik rule like Host(`foo.example.com`)."""
+    m = re.search(r'Host\(`([^`]+)`\)', rule or "")
+    return m.group(1) if m else None
+
+
 @router.get("")
 def list_routers(
     db: Annotated[Session, Depends(get_db)],
@@ -38,6 +50,83 @@ def list_routers(
     raw = cache_mod.get_cached("traefik:routers", factory)
     rows = build_router_rows(raw)
     return filter_rows_for_user(rows, is_superuser=user.is_superuser, allowed_routers=allowed)
+
+
+@router.get("/{router_name:path}/waf-test")
+def waf_test(
+    router_name: str,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    """
+    Send a request with a typical XSS payload to the service URL.
+    The CrowdSec AppSec module should respond with 403.
+    Returns {blocked: bool, status_code: int, url: str, error?: str}.
+    """
+    allowed = allowed_router_names(db, user)
+    ensure_router_allowed(user, router_name, allowed)
+
+    raw = traefik_client.fetch_routers_sync(db)
+    match = next((r for r in raw if r.get("name") == router_name), None)
+    if match is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Router not found")
+
+    host = _extract_host_from_rule(str(match.get("rule") or ""))
+    if not host:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Cannot extract hostname from router rule")
+
+    # Typical payload that triggers CrowdSec AppSec XSS rule
+    test_url = f"https://{host}/?waf_probe=<script>alert(1)</script>"
+    try:
+        with httpx.Client(timeout=8.0, verify=False, follow_redirects=True) as client:
+            r = client.get(test_url, headers={"User-Agent": "Crowdefik-WAF-Probe/1.0"})
+            blocked = r.status_code in (403, 406)
+            return {"blocked": blocked, "status_code": r.status_code, "url": test_url}
+    except httpx.ConnectError as exc:
+        return {"blocked": False, "status_code": None, "url": test_url, "error": f"Connection refused: {exc}"}
+    except Exception as exc:
+        return {"blocked": False, "status_code": None, "url": test_url, "error": str(exc)[:300]}
+
+
+@router.post("/crowdsec/bulk")
+def bulk_crowdsec(
+    body: BulkActionIn,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    """Apply enable/disable/reset to all visible routers at once."""
+    settings = get_settings()
+    allowed = allowed_router_names(db, user)
+    raw = traefik_client.fetch_routers_sync(db)
+    rows = build_router_rows(raw)
+    visible = filter_rows_for_user(rows, is_superuser=user.is_superuser, allowed_routers=allowed)
+
+    ok = 0
+    skipped = 0
+    for r in visible:
+        name = r["name"]
+        rule = str(r.get("rule") or "")
+        service = str(r.get("service") or "")
+        entry_points = r.get("entry_points") or []
+        base_priority = int(r.get("priority") or 0)
+
+        if not rule or not service:
+            skipped += 1
+            continue
+
+        if body.action == "enable":
+            write_override(settings, router_name=name, rule=rule, service=service,
+                           entry_points=entry_points, base_priority=base_priority, with_crowdsec=True)
+        elif body.action == "disable":
+            write_override(settings, router_name=name, rule=rule, service=service,
+                           entry_points=entry_points, base_priority=base_priority, with_crowdsec=False)
+        elif body.action == "reset":
+            remove_override(settings, name)
+        ok += 1
+
+    cache_mod.invalidate_prefix("traefik:")
+    return {"ok": True, "action": body.action, "applied": ok, "skipped": skipped}
 
 
 @router.post("/{router_name:path}/crowdsec")

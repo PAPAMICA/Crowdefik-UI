@@ -101,6 +101,23 @@ async def fetch_metrics(db: Session) -> dict[str, Any] | None:
         return None
 
 
+def delete_decision(db: Session, decision_id: int) -> dict[str, Any]:
+    """Delete (unban) a decision by its CrowdSec ID."""
+    h = _headers(db)
+    base = _base(db)
+    if not h:
+        return {"ok": False, "error": "No API key configured"}
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            r = client.delete(f"{base}/v1/decisions/{decision_id}", headers=h)
+            r.raise_for_status()
+            return {"ok": True, "id": decision_id}
+    except httpx.HTTPStatusError as exc:
+        return {"ok": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}
+
+
 def test_connection(db: Session) -> dict[str, Any]:
     """Check LAPI reachability + API key validity."""
     h = _headers(db)

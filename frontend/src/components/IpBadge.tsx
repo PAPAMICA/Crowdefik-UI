@@ -1,6 +1,7 @@
 import { AlertTriangle, Globe, Info, X } from 'lucide-react'
 import { useState } from 'react'
 import { apiFetch } from '../api'
+import { CountryFlag } from './CountryFlag'
 
 type GeoData = {
   country?: string; countryCode?: string; city?: string; regionName?: string
@@ -19,14 +20,10 @@ function scoreColor(score: number) {
   return 'text-emerald-500 bg-emerald-500/10'
 }
 
-function flagEmoji(cc: string) {
-  if (!cc || cc.length !== 2) return ''
-  return String.fromCodePoint(...[...cc.toUpperCase()].map((c) => 0x1f1e0 + c.charCodeAt(0) - 65))
-}
-
 function Modal({ info, onClose }: { info: IpInfo; onClose: () => void }) {
   const { geo, abuse } = info
   const score = abuse?.abuseConfidenceScore ?? null
+  const cc = abuse?.countryCode || geo?.countryCode || ''
 
   return (
     <div
@@ -39,9 +36,7 @@ function Modal({ info, onClose }: { info: IpInfo; onClose: () => void }) {
           <div className="flex items-center gap-2">
             <Globe className="h-4 w-4 text-violet-500" />
             <span className="font-mono text-sm font-medium">{info.ip}</span>
-            {(abuse?.countryCode || geo?.countryCode) && (
-              <span className="text-lg">{flagEmoji(abuse?.countryCode || geo?.countryCode || '')}</span>
-            )}
+            {cc && <CountryFlag code={cc} size={20} />}
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
@@ -69,7 +64,15 @@ function Modal({ info, onClose }: { info: IpInfo; onClose: () => void }) {
             <div className="space-y-2 text-sm">
               <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Geolocation</div>
               <div className="grid grid-cols-2 gap-2">
-                {geo.country && <Row label="Country" value={`${flagEmoji(geo.countryCode || '')} ${geo.country}`} />}
+                {geo.country && (
+                <div className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/60">
+                  <div className="text-[10px] text-slate-400">Country</div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200">
+                    {geo.countryCode && <CountryFlag code={geo.countryCode} size={16} />}
+                    {geo.country}
+                  </div>
+                </div>
+              )}
                 {geo.city && <Row label="City" value={geo.city} />}
                 {geo.regionName && <Row label="Region" value={geo.regionName} />}
                 {geo.isp && <Row label="ISP" value={geo.isp} />}

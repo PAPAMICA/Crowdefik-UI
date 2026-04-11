@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     app_secret: str = "change-me-32-chars-minimum!!"
 
     traefik_custom_dir: Path = Path("/traefik-custom")
-    traefik_override_subdir: str = "crowdefik-overrides"
+    # Override files are written directly in traefik_custom_dir (NOT a subdir)
+    # so Traefik's file provider picks them up immediately via `directory: custom/`.
+    # Files are named  crowdefik-<safe_router_name>.yml  to avoid collisions.
     crowdsec_middleware: str = "crowdsec@file"
 
     cache_ttl_seconds: int = 60 * 60 * 2

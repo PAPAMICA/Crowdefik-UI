@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import allowed_router_names, get_current_user
@@ -45,6 +45,23 @@ def list_decisions(
     if hosts is None:
         return decisions[:limit]
     return [d for d in decisions if blob_matches_hosts(d, hosts)][:limit]
+
+
+@router.delete("/decisions/{decision_id}")
+def unban_decision(
+    decision_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Delete a CrowdSec decision (unban an IP)."""
+    if not user.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser required")
+    result = crowdsec_client.delete_decision(db, decision_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result.get("error", "Unknown error"))
+    # Invalidate cache so the decision list refreshes
+    cache_mod.invalidate_prefix("crowdsec:")
+    return result
 
 
 @router.get("/alerts")

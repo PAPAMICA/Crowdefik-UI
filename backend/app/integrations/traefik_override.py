@@ -33,17 +33,20 @@ OverrideState = Literal["on", "off", "none"]
 
 def _safe_name(router_name: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9._-]+", "-", router_name.replace("@", "-at-"))
-    return s.strip("-")[:200] or "router"
+    return s.strip("-")[:180] or "router"
 
 
 def _override_dir(settings: Settings) -> Path:
-    d = settings.traefik_custom_dir / settings.traefik_override_subdir
+    # Write directly in the Traefik file-provider root so that `directory: custom/`
+    # picks up changes immediately — no subdirectory needed.
+    d = settings.traefik_custom_dir
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def _override_path(settings: Settings, router_name: str) -> Path:
-    return _override_dir(settings) / f"{_safe_name(router_name)}.yml"
+    # Prefix  crowdefik-  avoids collisions with user's own config files
+    return _override_dir(settings) / f"crowdefik-{_safe_name(router_name)}.yml"
 
 
 def _ensure_cross_provider_service(service: str, router_name: str) -> str:

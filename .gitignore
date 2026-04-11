@@ -23,5 +23,5 @@ frontend/dist/
 # Docker
 .env
 
-traefik-docker-compose.yml
+traefik/
 INSTRUCTION.md
