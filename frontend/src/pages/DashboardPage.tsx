@@ -8,7 +8,7 @@ import {
 import { apiFetch, getToken, wsDashboardUrl } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
-import { Skeleton, SkeletonCard, SkeletonChart } from '../components/Skeleton'
+import { Skeleton, SkeletonCard } from '../components/Skeleton'
 
 const AttackerMap = lazy(() => import('../components/AttackerMap').then((m) => ({ default: m.AttackerMap })))
 

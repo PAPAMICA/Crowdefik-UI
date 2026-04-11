@@ -21,7 +21,7 @@ export function SkeletonChart({ height = 200 }: { height?: number }) {
         <Skeleton className="h-4 w-4 rounded" />
         <Skeleton className="h-4 w-32" />
       </div>
-      <Skeleton className="w-full rounded-xl" style={{ height }} />
+      <div className="animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700/50" style={{ height }} />
     </div>
   )
 }
