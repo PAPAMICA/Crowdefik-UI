@@ -25,6 +25,7 @@ def _row_to_out(row) -> InstanceSettingsOut:
         has_abuseipdb_api_key=bool(getattr(row, "abuseipdb_api_key_enc", None)),
         crowdsec_machine_id=getattr(row, "crowdsec_machine_id", None) or None,
         has_crowdsec_machine_password=bool(getattr(row, "crowdsec_machine_pass_enc", None)),
+        crowdsec_container_name=getattr(row, "crowdsec_container_name", None) or "crowdsec",
     )
 
 
@@ -64,6 +65,8 @@ def put_settings_api(
             )
             from app.integrations.crowdsec_client import invalidate_jwt_cache
             invalidate_jwt_cache(db)
+        if body.crowdsec_container_name is not None:
+            row.crowdsec_container_name = body.crowdsec_container_name or "crowdsec"
     except Exception:
         pass  # Column not yet migrated — will work after container restart
     db.add(row)

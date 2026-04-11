@@ -72,6 +72,10 @@ _MIGRATIONS: list[tuple[str, str]] = [
         "SELECT target_host FROM stored_alerts LIMIT 1",
         "ALTER TABLE stored_alerts ADD COLUMN target_host VARCHAR(256)",
     ),
+    (
+        "SELECT crowdsec_container_name FROM instance_settings LIMIT 1",
+        "ALTER TABLE instance_settings ADD COLUMN crowdsec_container_name VARCHAR(256) DEFAULT 'crowdsec'",
+    ),
 ]
 
 

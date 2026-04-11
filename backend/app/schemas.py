@@ -38,6 +38,7 @@ class InstanceSettingsOut(BaseModel):
     has_abuseipdb_api_key: bool
     crowdsec_machine_id: str | None
     has_crowdsec_machine_password: bool
+    crowdsec_container_name: str | None
 
 
 class InstanceSettingsUpdateIn(BaseModel):
@@ -49,6 +50,7 @@ class InstanceSettingsUpdateIn(BaseModel):
     abuseipdb_api_key: str | None = None
     crowdsec_machine_id: str | None = None
     crowdsec_machine_password: str | None = None
+    crowdsec_container_name: str | None = None
 
 
 class CrowdsecToggleIn(BaseModel):

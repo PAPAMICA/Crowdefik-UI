@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { apiFetch, getToken, wsDashboardUrl } from '../api'
 import { useAuth } from '../auth'
@@ -152,28 +152,44 @@ export function DashboardPage() {
 
       {/* Charts */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Attack scenarios */}
+        {/* Attack scenarios — donut */}
         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
-          <div className="mb-4 flex items-center gap-2">
+          <div className="mb-2 flex items-center gap-2">
             <ShieldAlert className="h-4 w-4 text-amber-500" />
             <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Attack scenarios</span>
           </div>
           {topTypes.length ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={topTypes} layout="vertical" margin={{ left: 0, right: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" horizontal={false} />
-                <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="type" width={120} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <Tooltip
-                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: '#f1f5f9' }}
-                  itemStyle={{ color: '#94a3b8' }}
-                />
-                <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                  {topTypes.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="flex items-center gap-2">
+              <ResponsiveContainer width={180} height={220}>
+                <PieChart>
+                  <Pie
+                    data={topTypes}
+                    dataKey="count"
+                    nameKey="type"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={52}
+                    outerRadius={80}
+                    paddingAngle={2}
+                  >
+                    {topTypes.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+                    itemStyle={{ color: '#f1f5f9' }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex-1 space-y-1.5 min-w-0">
+                {topTypes.slice(0, 7).map((t, i) => (
+                  <div key={t.type} className="flex items-center gap-2 text-xs">
+                    <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
+                    <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300" title={t.type}>{t.type}</span>
+                    <span className="flex-shrink-0 font-semibold text-slate-700 dark:text-slate-200">{t.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : (
             <div className="flex h-[220px] items-center justify-center text-sm text-slate-400">No data yet</div>
           )}
@@ -186,19 +202,22 @@ export function DashboardPage() {
             <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Top attacker IPs</span>
           </div>
           {(summary?.top_attacker_ips ?? []).length ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={summary!.top_attacker_ips} layout="vertical" margin={{ left: 0, right: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" horizontal={false} />
-                <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="ip" width={120} tick={{ fontSize: 10, fill: '#94a3b8', fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
-                <Tooltip
-                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: '#f1f5f9' }}
-                  itemStyle={{ color: '#94a3b8' }}
-                />
-                <Bar dataKey="count" fill="#ef4444" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="space-y-2">
+              {(summary?.top_attacker_ips ?? []).slice(0, 8).map((item, i) => {
+                const max = summary!.top_attacker_ips[0]?.count || 1
+                const pct = Math.max(4, Math.round((item.count / max) * 100))
+                return (
+                  <div key={item.ip} className="flex items-center gap-3">
+                    <span className="w-4 flex-shrink-0 text-center text-[10px] font-bold text-slate-400">{i + 1}</span>
+                    <span className="w-28 flex-shrink-0 font-mono text-xs text-slate-700 dark:text-slate-200 truncate">{item.ip}</span>
+                    <div className="flex-1 rounded-full bg-slate-100 dark:bg-slate-700/60" style={{ height: 6 }}>
+                      <div className="h-1.5 rounded-full bg-red-500 transition-all duration-500" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="w-8 flex-shrink-0 text-right text-xs font-semibold text-slate-600 dark:text-slate-300">{item.count}</span>
+                  </div>
+                )
+              })}
+            </div>
           ) : (
             <div className="flex h-[220px] items-center justify-center text-sm text-slate-400">No data yet</div>
           )}
@@ -210,7 +229,7 @@ export function DashboardPage() {
         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
           <div className="mb-4 flex items-center gap-2">
             <ShieldAlert className="h-4 w-4 text-violet-500" />
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Attacks by service — last 7 days</span>
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Attacks by service — last {days} day{days > 1 ? 's' : ''}</span>
           </div>
           <div className="grid gap-2">
             {serviceStats.map((s) => {
@@ -258,7 +277,7 @@ export function DashboardPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
         <div className="mb-4 flex items-center gap-2">
           <Activity className="h-4 w-4 text-blue-500" />
-          <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Alerts — last 7 days</span>
+          <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Alerts — last {days} day{days > 1 ? 's' : ''}</span>
         </div>
         {timeline.length ? (
           <ResponsiveContainer width="100%" height={180}>
@@ -296,15 +315,13 @@ export function DashboardPage() {
           </div>
           <span className="text-xs text-slate-400">{geo.length} unique IPs</span>
         </div>
-        {geo.length ? (
-          <Suspense fallback={<div className="flex h-64 items-center justify-center text-sm text-slate-500">Loading map…</div>}>
-            <AttackerMap points={geo} />
-          </Suspense>
-        ) : (
-          <div className="flex h-64 flex-col items-center justify-center gap-2 text-sm text-slate-400">
-            <span>No geolocation data yet</span>
-            <span className="text-xs">Data populates automatically every 5 minutes from CrowdSec alerts</span>
-          </div>
+        <Suspense fallback={<div className="flex h-[340px] items-center justify-center text-sm text-slate-500">Loading map…</div>}>
+          <AttackerMap points={geo} />
+        </Suspense>
+        {geo.length === 0 && (
+          <p className="mt-2 text-center text-xs text-slate-400">
+            No geolocation data yet — populates every 5 min from CrowdSec alerts
+          </p>
         )}
       </div>
     </div>

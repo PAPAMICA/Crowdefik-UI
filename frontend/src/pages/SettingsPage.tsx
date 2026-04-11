@@ -13,6 +13,7 @@ type SettingsOut = {
   has_abuseipdb_api_key: boolean
   crowdsec_machine_id: string | null
   has_crowdsec_machine_password: boolean
+  crowdsec_container_name: string | null
 }
 type TestResult = {
   ok: boolean; error?: string; version?: string | null; http_routers?: number | null
@@ -65,10 +66,11 @@ function Section({ title, description, onTest, testResult, children, note }: Sec
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="flex flex-col gap-1.5 text-sm">
       <span className="font-medium text-slate-600 dark:text-slate-300">{label}</span>
+      {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
       {children}
     </label>
   )
@@ -83,6 +85,7 @@ export function SettingsPage() {
     traefik_api_url: '', traefik_basic_user: '', traefik_basic_password: '',
     crowdsec_lapi_url: '', crowdsec_api_key: '',
     crowdsec_machine_id: '', crowdsec_machine_password: '',
+    crowdsec_container_name: 'crowdsec',
     abuseipdb_api_key: '',
   })
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
@@ -102,6 +105,7 @@ export function SettingsPage() {
         traefik_basic_user: data.traefik_basic_user ?? '',
         crowdsec_lapi_url: data.crowdsec_lapi_url,
         crowdsec_machine_id: data.crowdsec_machine_id ?? '',
+        crowdsec_container_name: data.crowdsec_container_name ?? 'crowdsec',
       }))
     })()
   }, [])
@@ -117,11 +121,13 @@ export function SettingsPage() {
       traefik_basic_user: form.traefik_basic_user || null,
       crowdsec_lapi_url: form.crowdsec_lapi_url,
       crowdsec_machine_id: form.crowdsec_machine_id || null,
+      crowdsec_container_name: form.crowdsec_container_name || 'crowdsec',
     }
     if (form.traefik_basic_password) payload.traefik_basic_password = form.traefik_basic_password
     if (form.crowdsec_api_key) payload.crowdsec_api_key = form.crowdsec_api_key
     if (form.crowdsec_machine_password) payload.crowdsec_machine_password = form.crowdsec_machine_password
     if (form.abuseipdb_api_key) payload.abuseipdb_api_key = form.abuseipdb_api_key
+    if (form.crowdsec_container_name) payload.crowdsec_container_name = form.crowdsec_container_name
     const res = await apiFetch('/api/settings', { method: 'PUT', body: JSON.stringify(payload) })
     if (!res.ok) { setMsg({ text: 'Save failed', ok: false }); return }
     const data = (await res.json()) as SettingsOut
@@ -233,6 +239,15 @@ export function SettingsPage() {
                 value={form.crowdsec_machine_password}
                 placeholder={s?.has_crowdsec_machine_password ? '(unchanged)' : 'Enter machine password'}
                 onChange={(e) => setForm({ ...form, crowdsec_machine_password: e.target.value })}
+              />
+            </Field>
+            <Field label="Nom du conteneur Docker CrowdSec"
+              hint="Used for cscli management (bouncers, machines) via docker exec">
+              <input
+                className={inputClass}
+                value={form.crowdsec_container_name}
+                placeholder="crowdsec"
+                onChange={(e) => setForm({ ...form, crowdsec_container_name: e.target.value })}
               />
             </Field>
           </div>

@@ -1,8 +1,9 @@
+import json
 import logging
 from typing import Any
 
 import docker
-from docker.errors import DockerException
+from docker.errors import DockerException, NotFound
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +36,57 @@ def list_traefik_containers() -> list[dict[str, Any]]:
     except DockerException as exc:
         log.warning("Docker list containers failed: %s", exc)
         return []
+
+
+def _cscli(container_name: str, args: list[str]) -> dict[str, Any]:
+    """Run a cscli command inside a container and return parsed JSON output."""
+    try:
+        c = _client()
+    except DockerException as exc:
+        return {"ok": False, "error": f"Docker connect failed: {exc}"}
+    try:
+        container = c.containers.get(container_name)
+    except NotFound:
+        return {"ok": False, "error": f"Container '{container_name}' not found"}
+    except DockerException as exc:
+        return {"ok": False, "error": str(exc)}
+    try:
+        result = container.exec_run(["cscli"] + args + ["-o", "json"])
+        raw = result.output.decode("utf-8", errors="replace").strip()
+        if result.exit_code != 0:
+            return {"ok": False, "error": raw or f"cscli exited with code {result.exit_code}"}
+        data = json.loads(raw) if raw else []
+        return {"ok": True, "data": data}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def cscli_list_bouncers(container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["bouncers", "list"])
+
+
+def cscli_add_bouncer(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["bouncers", "add", name])
+
+
+def cscli_delete_bouncer(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["bouncers", "delete", name])
+
+
+def cscli_list_machines(container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["machines", "list"])
+
+
+def cscli_add_machine(machine_id: str, password: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["machines", "add", machine_id, "--password", password, "--force"])
+
+
+def cscli_delete_machine(machine_id: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["machines", "delete", machine_id])
+
+
+def cscli_validate_machine(machine_id: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["machines", "validate", machine_id])
 
 
 def test_connection() -> dict[str, Any]:

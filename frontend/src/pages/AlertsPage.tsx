@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
-import { CountryFlag } from '../components/CountryFlag'
 import { IpBadge } from '../components/IpBadge'
 
 function exportCSV(rows: Alert[], filename: string) {
@@ -284,7 +283,6 @@ export function AlertsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        {cn && <CountryFlag code={cn} size={16} />}
                         {ip ? <IpBadge ip={ip} /> : <span className="text-xs text-slate-400">—</span>}
                       </div>
                     </td>

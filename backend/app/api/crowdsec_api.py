@@ -4,11 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import allowed_router_names, get_current_user
+from app.api.deps import allowed_router_names, get_current_user, require_superuser
 from app.core import cache as cache_mod
 from app.core.audit import log_action
 from app.db import get_db
-from app.integrations import crowdsec_client, traefik_client
+from app.integrations import crowdsec_client, docker_svc, traefik_client
 from app.integrations.instance_settings import (
     crowdsec_api_key_plain,
     crowdsec_machine_password_plain,
@@ -25,6 +25,15 @@ class BanIn(BaseModel):
     duration: str = "24h"
     reason: str = "manual"
     type: str = "ban"
+
+
+class BouncerAddIn(BaseModel):
+    name: str
+
+
+class MachineAddIn(BaseModel):
+    machine_id: str
+    password: str
 
 router = APIRouter(prefix="/crowdsec", tags=["crowdsec"])
 
@@ -121,20 +130,97 @@ def unban_decision(
     return result
 
 
+def _container_name(db: Session) -> str:
+    s = get_or_create_instance_settings(db)
+    return getattr(s, "crowdsec_container_name", None) or "crowdsec"
+
+
 @router.get("/bouncers")
 def list_bouncers(
     db: Annotated[Session, Depends(get_db)],
-    _user: Annotated[User, Depends(get_current_user)],
-) -> list[dict[str, Any]]:
-    return crowdsec_client.get_bouncers(db)
+    _user: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    result = docker_svc.cscli_list_bouncers(_container_name(db))
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error"), "data": []}
+    data = result.get("data") or []
+    if isinstance(data, dict) and "items" in data:
+        data = data["items"]
+    return {"ok": True, "data": data if isinstance(data, list) else []}
+
+
+@router.post("/bouncers")
+def add_bouncer(
+    body: BouncerAddIn,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    result = docker_svc.cscli_add_bouncer(body.name, _container_name(db))
+    if result.get("ok"):
+        log_action(db, user, "add_bouncer", target=body.name)
+    return result
+
+
+@router.delete("/bouncers/{name}")
+def delete_bouncer(
+    name: str,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    result = docker_svc.cscli_delete_bouncer(name, _container_name(db))
+    if result.get("ok"):
+        log_action(db, user, "delete_bouncer", target=name)
+    return result
 
 
 @router.get("/machines")
 def list_machines(
     db: Annotated[Session, Depends(get_db)],
-    _user: Annotated[User, Depends(get_current_user)],
-) -> list[dict[str, Any]]:
-    return crowdsec_client.get_machines(db)
+    _user: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    result = docker_svc.cscli_list_machines(_container_name(db))
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error"), "data": []}
+    data = result.get("data") or []
+    if isinstance(data, dict) and "items" in data:
+        data = data["items"]
+    return {"ok": True, "data": data if isinstance(data, list) else []}
+
+
+@router.post("/machines")
+def add_machine(
+    body: MachineAddIn,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    result = docker_svc.cscli_add_machine(body.machine_id, body.password, _container_name(db))
+    if result.get("ok"):
+        log_action(db, user, "add_machine", target=body.machine_id)
+    return result
+
+
+@router.delete("/machines/{machine_id}")
+def delete_machine(
+    machine_id: str,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    result = docker_svc.cscli_delete_machine(machine_id, _container_name(db))
+    if result.get("ok"):
+        log_action(db, user, "delete_machine", target=machine_id)
+    return result
+
+
+@router.post("/machines/{machine_id}/validate")
+def validate_machine(
+    machine_id: str,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    result = docker_svc.cscli_validate_machine(machine_id, _container_name(db))
+    if result.get("ok"):
+        log_action(db, user, "validate_machine", target=machine_id)
+    return result
 
 
 @router.get("/status")

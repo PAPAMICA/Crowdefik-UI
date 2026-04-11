@@ -47,6 +47,8 @@ class InstanceSettings(Base):
     # CrowdSec machine/watcher credentials (needed for /v1/alerts — bouncer key only allows /v1/decisions)
     crowdsec_machine_id = mapped_column(String(256), nullable=True)
     crowdsec_machine_pass_enc = mapped_column(Text, nullable=True)
+    # Docker container name for cscli management (default: "crowdsec")
+    crowdsec_container_name = mapped_column(String(256), nullable=True, default="crowdsec")
     updated_at = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
