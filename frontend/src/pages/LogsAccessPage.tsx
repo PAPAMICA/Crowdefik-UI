@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
+import { CountryFlag } from '../components/CountryFlag'
 import { LinePicker } from '../components/LinePicker'
 import { Skeleton } from '../components/Skeleton'
 import { usePagePerf } from '../hooks/usePagePerf'
@@ -11,10 +12,25 @@ type Entry = {
   time: string | null; host: string; method: string | null; path: string | null
   status: number | null; client_ip: string | null; duration_ms: number
   bytes: number | null; router: string | null; tls_version: string | null
+  country_code: string | null; abuse_score: number | null
 }
 type Data = { available: boolean; total: number; page: number; pages: number; lines: number; entries: Entry[] }
 
 const PAGE_SIZE = 200
+
+function AbuseScore({ score }: { score: number | null }) {
+  if (score === null || score === undefined) return <span className="text-slate-300 dark:text-slate-600">—</span>
+  const cls =
+    score >= 75 ? 'bg-red-500/15 text-red-600 dark:text-red-400' :
+    score >= 30 ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' :
+    score > 0   ? 'bg-yellow-500/15 text-yellow-600 dark:text-yellow-400' :
+                  'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+  return (
+    <span className={`inline-block rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${cls}`}>
+      {score}
+    </span>
+  )
+}
 
 function statusColor(code: number | null) {
   if (!code) return 'text-slate-400'
@@ -140,16 +156,16 @@ export function LogsAccessPage() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/60 dark:border-slate-700/50 dark:bg-slate-800/40">
-                  {['Time', 'Host', 'Method', 'Path', 'Status', 'Client IP', 'Duration', 'Size', 'TLS'].map((h) => (
+                  {['Time', 'Host', 'Method', 'Path', 'Status', 'Client IP', 'Score', 'Duration', 'Size', 'TLS'].map((h) => (
                     <th key={h} className="px-3 py-2.5 text-left font-medium text-slate-400">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/30">
-                {fetching && !data
+                  {fetching && !data
                   ? Array.from({ length: 12 }).map((_, i) => (
                     <tr key={i}>
-                      {Array.from({ length: 9 }).map((_, j) => (
+                      {Array.from({ length: 10 }).map((_, j) => (
                         <td key={j} className="px-3 py-2"><Skeleton className="h-3 w-full" /></td>
                       ))}
                     </tr>
@@ -157,7 +173,7 @@ export function LogsAccessPage() {
                   : (data?.entries ?? []).length === 0
                     ? (
                       <tr>
-                        <td colSpan={9} className="py-12 text-center text-sm text-slate-400">
+                        <td colSpan={10} className="py-12 text-center text-sm text-slate-400">
                           No entries match — try increasing the line count or adjusting filters
                         </td>
                       </tr>
@@ -171,7 +187,15 @@ export function LogsAccessPage() {
                         <td className="px-3 py-1.5 font-mono font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">{e.method ?? '—'}</td>
                         <td className="max-w-[260px] truncate px-3 py-1.5 font-mono text-slate-600 dark:text-slate-300" title={e.path ?? ''}>{e.path ?? '—'}</td>
                         <td className={`px-3 py-1.5 text-center font-semibold whitespace-nowrap ${statusColor(e.status)}`}>{e.status ?? '—'}</td>
-                        <td className="px-3 py-1.5 font-mono text-slate-600 dark:text-slate-300 whitespace-nowrap">{e.client_ip ?? '—'}</td>
+                        <td className="px-3 py-1.5 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1.5 font-mono text-slate-600 dark:text-slate-300">
+                            {e.country_code && <CountryFlag code={e.country_code} size={14} />}
+                            {e.client_ip ?? '—'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 whitespace-nowrap">
+                          <AbuseScore score={e.abuse_score} />
+                        </td>
                         <td className="px-3 py-1.5 text-right font-mono text-slate-500 whitespace-nowrap">{e.duration_ms > 0 ? `${e.duration_ms}ms` : '—'}</td>
                         <td className="px-3 py-1.5 text-right font-mono text-slate-400 whitespace-nowrap">{e.bytes != null ? `${(e.bytes / 1024).toFixed(1)}k` : '—'}</td>
                         <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{e.tls_version ?? '—'}</td>

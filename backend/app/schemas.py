@@ -40,6 +40,10 @@ class InstanceSettingsOut(BaseModel):
     has_crowdsec_machine_password: bool
     crowdsec_container_name: str | None
     traefik_container_name: str | None
+    # Configurable log file paths (override env vars at runtime)
+    log_path_access: str | None = None
+    log_path_traefik: str | None = None
+    log_path_crowdsec: str | None = None
 
 
 class InstanceSettingsUpdateIn(BaseModel):
@@ -53,6 +57,9 @@ class InstanceSettingsUpdateIn(BaseModel):
     crowdsec_machine_password: str | None = None
     crowdsec_container_name: str | None = None
     traefik_container_name: str | None = None
+    log_path_access: str | None = None
+    log_path_traefik: str | None = None
+    log_path_crowdsec: str | None = None
 
 
 class CrowdsecToggleIn(BaseModel):

@@ -51,6 +51,10 @@ class InstanceSettings(Base):
     crowdsec_container_name = mapped_column(String(256), nullable=True, default="crowdsec")
     # Docker container name for reading Traefik logs via docker exec (default: "traefik")
     traefik_container_name = mapped_column(String(256), nullable=True, default="traefik")
+    # Log file paths — override env vars at runtime without container restart
+    log_path_access = mapped_column(String(512), nullable=True)   # Traefik access log (JSON)
+    log_path_traefik = mapped_column(String(512), nullable=True)  # Traefik app log
+    log_path_crowdsec = mapped_column(String(512), nullable=True) # CrowdSec log
     updated_at = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 

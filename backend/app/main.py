@@ -108,6 +108,18 @@ _MIGRATIONS: list[tuple[str, str]] = [
         "SELECT abuse_updated_at FROM ip_geo_cache LIMIT 1",
         "ALTER TABLE ip_geo_cache ADD COLUMN abuse_updated_at DATETIME",
     ),
+    (
+        "SELECT log_path_access FROM instance_settings LIMIT 1",
+        "ALTER TABLE instance_settings ADD COLUMN log_path_access VARCHAR(512)",
+    ),
+    (
+        "SELECT log_path_traefik FROM instance_settings LIMIT 1",
+        "ALTER TABLE instance_settings ADD COLUMN log_path_traefik VARCHAR(512)",
+    ),
+    (
+        "SELECT log_path_crowdsec FROM instance_settings LIMIT 1",
+        "ALTER TABLE instance_settings ADD COLUMN log_path_crowdsec VARCHAR(512)",
+    ),
 ]
 
 

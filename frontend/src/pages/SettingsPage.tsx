@@ -20,6 +20,9 @@ type SettingsOut = {
   has_crowdsec_machine_password: boolean
   crowdsec_container_name: string | null
   traefik_container_name: string | null
+  log_path_access: string | null
+  log_path_traefik: string | null
+  log_path_crowdsec: string | null
 }
 type TestResult = {
   ok: boolean; error?: string; version?: string | null; http_routers?: number | null
@@ -132,6 +135,9 @@ export function SettingsPage() {
     crowdsec_container_name: 'crowdsec',
     traefik_container_name: 'traefik',
     abuseipdb_api_key: '',
+    log_path_access: '',
+    log_path_traefik: '',
+    log_path_crowdsec: '',
   })
   const [tab, setTab] = useState<TabId>('traefik')
   const [saving, setSaving] = useState(false)
@@ -155,6 +161,9 @@ export function SettingsPage() {
         crowdsec_machine_id: data.crowdsec_machine_id ?? '',
         crowdsec_container_name: data.crowdsec_container_name ?? 'crowdsec',
         traefik_container_name: data.traefik_container_name ?? 'traefik',
+        log_path_access: data.log_path_access ?? '',
+        log_path_traefik: data.log_path_traefik ?? '',
+        log_path_crowdsec: data.log_path_crowdsec ?? '',
       }))
     })()
   }, [])
@@ -177,6 +186,9 @@ export function SettingsPage() {
       crowdsec_machine_id: f.crowdsec_machine_id || null,
       crowdsec_container_name: f.crowdsec_container_name || 'crowdsec',
       traefik_container_name: f.traefik_container_name || 'traefik',
+      log_path_access: f.log_path_access || null,
+      log_path_traefik: f.log_path_traefik || null,
+      log_path_crowdsec: f.log_path_crowdsec || null,
     }
     if (f.traefik_basic_password) payload.traefik_basic_password = f.traefik_basic_password
     if (f.crowdsec_api_key) payload.crowdsec_api_key = f.crowdsec_api_key
@@ -373,44 +385,68 @@ export function SettingsPage() {
             {tab === 'logs' && (
               <div className="space-y-6">
                 <InfoBox color="emerald">
-                  <p>Container names are used to read logs via <code>docker exec</code>. Alternatively, mount log files and set the corresponding env vars.</p>
+                  <p>Log paths set here take priority over environment variables. Leave blank to fall back to the env var, then to <code>docker exec</code>.</p>
                 </InfoBox>
 
-                {/* Traefik */}
+                {/* Traefik access log */}
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-700/50">
                     <Activity className="h-4 w-4 text-blue-500" />
-                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Traefik</span>
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Traefik access log (JSON)</span>
                   </div>
                   <Field
+                    label="Access log path"
+                    hint="Path to Traefik JSON access log inside the container (e.g. /traefik-logs/access.log)"
+                  >
+                    <input
+                      className={inputClass}
+                      value={f.log_path_access}
+                      placeholder="/traefik-logs/access.log"
+                      onChange={set('log_path_access')}
+                    />
+                  </Field>
+                  <Field
+                    label="Traefik app log path"
+                    hint="Path to the Traefik operational log (e.g. /traefik-logs/traefik.log)"
+                  >
+                    <input
+                      className={inputClass}
+                      value={f.log_path_traefik}
+                      placeholder="/traefik-logs/traefik.log"
+                      onChange={set('log_path_traefik')}
+                    />
+                  </Field>
+                  <Field
                     label="Container name"
-                    hint="Used to read traefik.log via docker exec when CROWDEFIK_TRAEFIK_APP_LOG_PATH is not set"
+                    hint="Fallback: used to read logs via docker exec when no path is set above"
                   >
                     <input className={inputClass} value={f.traefik_container_name} placeholder="traefik" onChange={set('traefik_container_name')} />
                   </Field>
-                  <InfoBox color="blue">
-                    <p>Or mount the log file and set the env var:</p>
-                    <CodeSnippet>CROWDEFIK_TRAEFIK_LOG_PATH=/traefik-logs/access.log
-CROWDEFIK_TRAEFIK_APP_LOG_PATH=/traefik-logs/traefik.log</CodeSnippet>
-                  </InfoBox>
                 </div>
 
-                {/* CrowdSec */}
+                {/* CrowdSec log */}
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-700/50">
                     <Shield className="h-4 w-4 text-violet-500" />
-                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">CrowdSec</span>
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">CrowdSec log</span>
                   </div>
                   <Field
+                    label="CrowdSec log path"
+                    hint="Path to crowdsec.log inside the container (e.g. /var/log/crowdsec/crowdsec.log)"
+                  >
+                    <input
+                      className={inputClass}
+                      value={f.log_path_crowdsec}
+                      placeholder="/var/log/crowdsec/crowdsec.log"
+                      onChange={set('log_path_crowdsec')}
+                    />
+                  </Field>
+                  <Field
                     label="Container name"
-                    hint="Used for cscli commands (bouncers, machines) and to read crowdsec.log via docker exec"
+                    hint="Used for cscli commands and as fallback to read logs via docker exec"
                   >
                     <input className={inputClass} value={f.crowdsec_container_name} placeholder="crowdsec" onChange={set('crowdsec_container_name')} />
                   </Field>
-                  <InfoBox color="violet">
-                    <p>Or mount the log file and set the env var:</p>
-                    <CodeSnippet>CROWDEFIK_CROWDSEC_LOG_PATH=/var/log/crowdsec/crowdsec.log</CodeSnippet>
-                  </InfoBox>
                 </div>
               </div>
             )}

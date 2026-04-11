@@ -7,13 +7,17 @@ Three log sources:
   GET /api/logs/crowdsec  — CrowdSec log (via docker exec or mounted file)
 
 All endpoints share these query params:
-  lines  (int, default 1000): how many raw lines to tail before filtering.
-                               Increase to look further back in history.
+  lines  (int, default 1000): how many raw lines to consider before filtering.
   minutes (int, default 0):   additional time-window filter (0 = disabled).
+
+When a search / host / level filter is provided the backend runs a native
+grep pipeline (grep … | tail -n N) instead of reading all N lines into
+Python first.  This keeps large-file reads fast.
 """
 import json as _json
 import logging
 import re
+import shlex
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db import get_db
-from app.models import User
+from app.models import IpGeoCache, User
 from app.settings import get_settings
 
 router = APIRouter(prefix="/logs", tags=["logs"])
@@ -34,6 +38,55 @@ _DEFAULT_LIMIT   = 200
 _DEFAULT_LINES   = 1_000
 _MAX_LINES       = 50_000
 _DEFAULT_MINUTES = 0   # disabled by default — lines-based is the primary control
+
+
+# ── log-path resolution ───────────────────────────────────────────────────────
+
+def _resolve_path(db: Session, db_attr: str, env_path: Path | None) -> Path | None:
+    """Return effective log path: DB setting > env var.
+
+    Checks the DB value first (set from the Settings UI), falls back to the
+    env-var-based path from app settings.  Returns *None* when neither is set.
+    """
+    from app.integrations.instance_settings import get_or_create_instance_settings
+    try:
+        row = get_or_create_instance_settings(db)
+        db_val = getattr(row, db_attr, None)
+        if db_val:
+            return Path(db_val)
+    except Exception:
+        pass
+    return env_path
+
+
+def _get_container_name(db: Session, field: str, default: str) -> str:
+    from app.integrations.instance_settings import get_or_create_instance_settings
+    row = get_or_create_instance_settings(db)
+    return getattr(row, field, None) or default
+
+
+def _attach_geo(db: Session, entries: list[dict[str, Any]]) -> None:
+    """Attach country_code + abuse_score to each entry from IpGeoCache (single batch query).
+
+    Only reads from cache — never triggers external API calls.
+    Missing IPs simply get null values.
+    """
+    ips = {e["client_ip"] for e in entries if e.get("client_ip")}
+    if not ips:
+        return
+    rows = (
+        db.query(IpGeoCache.ip, IpGeoCache.country_code, IpGeoCache.abuse_score)
+        .filter(IpGeoCache.ip.in_(ips))
+        .all()
+    )
+    lookup: dict[str, tuple[str | None, int | None]] = {
+        r.ip: (r.country_code, r.abuse_score) for r in rows
+    }
+    for e in entries:
+        ip = e.get("client_ip")
+        cc, score = lookup.get(ip, (None, None)) if ip else (None, None)
+        e["country_code"] = cc
+        e["abuse_score"] = score
 
 
 # ── time helpers ──────────────────────────────────────────────────────────────
@@ -64,10 +117,10 @@ def _cutoff(minutes: int) -> datetime | None:
     return datetime.now(timezone.utc) - timedelta(minutes=minutes)
 
 
-# ── I/O helpers ───────────────────────────────────────────────────────────────
+# ── grep / I/O helpers ────────────────────────────────────────────────────────
 
 def _tail(path: Path, n: int) -> list[str]:
-    """Read last *n* lines from *path* efficiently."""
+    """Read last *n* lines from *path* efficiently (pure Python, no subprocess)."""
     n = max(1, min(n, _MAX_LINES))
     try:
         with path.open("rb") as fh:
@@ -90,12 +143,32 @@ def _tail(path: Path, n: int) -> list[str]:
         return []
 
 
+def _grep_file(path: Path, grep_terms: list[str], n: int) -> list[str]:
+    """tail -n MAX | grep term1 | grep term2 | tail -n N  — run as sh -c pipeline."""
+    n = max(1, min(n, _MAX_LINES))
+    quoted_path = shlex.quote(str(path))
+    parts: list[str] = [f"tail -n {_MAX_LINES} {quoted_path}"]
+    for term in grep_terms:
+        parts.append(f"grep -ia {shlex.quote(term)}")
+    parts.append(f"tail -n {n}")
+    pipeline = " | ".join(parts)
+    try:
+        result = subprocess.run(
+            ["sh", "-c", pipeline],
+            capture_output=True, text=True, timeout=30,
+        )
+        return result.stdout.splitlines()
+    except Exception as exc:
+        log.warning("grep pipeline failed (%s): %s — falling back to _tail", path, exc)
+        return _tail(path, n)
+
+
 def _docker_exec(container: str, cmd: list[str]) -> list[str]:
     """Run a command inside *container* and return stdout lines."""
     try:
         result = subprocess.run(
             ["docker", "exec", container] + cmd,
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=15,
         )
         return result.stdout.splitlines()
     except Exception as exc:
@@ -103,10 +176,43 @@ def _docker_exec(container: str, cmd: list[str]) -> list[str]:
         return []
 
 
-def _get_container_name(db: Session, field: str, default: str) -> str:
-    from app.integrations.instance_settings import get_or_create_instance_settings
-    row = get_or_create_instance_settings(db)
-    return getattr(row, field, None) or default
+def _docker_grep(container: str, log_path: str, grep_terms: list[str], n: int) -> list[str]:
+    """Same grep pipeline but inside a docker container via sh -c."""
+    n = max(1, min(n, 5000))
+    quoted_path = shlex.quote(log_path)
+    parts: list[str] = [f"tail -n {_MAX_LINES} {quoted_path} 2>/dev/null"]
+    for term in grep_terms:
+        parts.append(f"grep -ia {shlex.quote(term)}")
+    parts.append(f"tail -n {n}")
+    pipeline = " | ".join(parts)
+    return _docker_exec(container, ["sh", "-c", pipeline])
+
+
+def _read_log_lines(
+    path: Path | None,
+    container: str | None,
+    container_paths: list[str],
+    n: int,
+    grep_terms: list[str],
+) -> tuple[list[str], str]:
+    """Return (lines, source) from file or docker, with optional grep pre-filter."""
+    n = max(1, min(n, _MAX_LINES))
+
+    if path and path.exists():
+        if grep_terms:
+            return _grep_file(path, grep_terms, n), "file"
+        return _tail(path, n), "file"
+
+    if container:
+        for cpath in container_paths:
+            if grep_terms:
+                lines = _docker_grep(container, cpath, grep_terms, n)
+            else:
+                lines = _docker_exec(container, ["tail", "-n", str(min(n, 5000)), cpath])
+            if lines:
+                return lines, "docker"
+
+    return [], "unavailable"
 
 
 # ── access log ────────────────────────────────────────────────────────────────
@@ -125,12 +231,22 @@ def access_logs(
 ) -> dict[str, Any]:
     """Traefik JSON access log — filterable, paginated."""
     s = get_settings()
-    if not s.traefik_log_path or not s.traefik_log_path.exists():
+    log_path = _resolve_path(db, "log_path_access", s.traefik_log_path)
+    if not log_path or not log_path.exists():
         return {"available": False, "total": 0, "entries": [], "lines": lines}
 
-    raw_lines = _tail(s.traefik_log_path, lines)
-    entries: list[dict[str, Any]] = []
+    # Build grep pre-filter terms: search text and host string are both safe to
+    # pass to grep as plain text pre-filters (Python does precise re-checking).
+    grep_terms: list[str] = []
+    if search:
+        grep_terms.append(search)
+    if host:
+        # pre-filter: host appears somewhere in the JSON line
+        grep_terms.append(host)
 
+    raw_lines, _source = _read_log_lines(log_path, None, [], lines, grep_terms)
+
+    entries: list[dict[str, Any]] = []
     search_lc = search.lower() if search else None
     host_lc = host.lower() if host else None
     cut = _cutoff(minutes)
@@ -181,6 +297,7 @@ def access_logs(
     limit = max(1, min(limit, 1000))
     total = len(entries)
     paged = entries[(page - 1) * limit: page * limit]
+    _attach_geo(db, paged)
     return {
         "available": True,
         "total": total,
@@ -203,20 +320,20 @@ def _parse_log_line(line: str) -> dict[str, str] | None:
         try:
             d = _json.loads(line)
             return {
-                "time": d.get("time", ""),
+                "time":  d.get("time", ""),
                 "level": (d.get("level") or "info").lower(),
-                "msg": d.get("msg", d.get("message", "")),
-                "raw": line,
+                "msg":   d.get("msg", d.get("message", "")),
+                "raw":   line,
             }
         except Exception:
             pass
     m = _LOG_RE.search(line)
     if m:
         return {
-            "time": m.group("time"),
+            "time":  m.group("time"),
             "level": m.group("level").lower(),
-            "msg": m.group("msg"),
-            "raw": line,
+            "msg":   m.group("msg"),
+            "raw":   line,
         }
     if line.strip():
         return {"time": "", "level": "info", "msg": line.strip(), "raw": line}
@@ -230,6 +347,7 @@ def _filter_log_entries(
     level_lc: str | None,
     search_lc: str | None,
 ) -> list[dict[str, str]]:
+    """Parse + precisely filter lines already pre-filtered by grep."""
     entries: list[dict[str, str]] = []
     for line in reversed(raw_lines):
         parsed = _parse_log_line(line)
@@ -238,13 +356,20 @@ def _filter_log_entries(
         if cut:
             dt = _parse_log_time(parsed["time"])
             if dt and dt < cut:
-                break  # reversed order — older entries follow, stop
+                break
         if level_lc and parsed["level"] != level_lc:
             continue
         if search_lc and search_lc not in parsed["msg"].lower() and search_lc not in parsed["raw"].lower():
             continue
         entries.append(parsed)
     return entries
+
+
+def _level_grep_term(level: str) -> str:
+    """Return a grep pattern that matches both logfmt (level=X) and JSON ("level":"X")."""
+    # Use a pattern broad enough to avoid missing either format.
+    # Example: 'level.{0,3}error' matches 'level=error' and '"level":"error"'
+    return f"level.{{0,3}}{re.escape(level.lower())}"
 
 
 # ── traefik app log ───────────────────────────────────────────────────────────
@@ -262,22 +387,21 @@ def traefik_logs(
 ) -> dict[str, Any]:
     """Traefik application log — file or docker exec fallback."""
     s = get_settings()
-    raw_lines: list[str] = []
-    source = "unavailable"
+    log_path = _resolve_path(db, "log_path_traefik", s.traefik_app_log_path)
+    container = _get_container_name(db, "traefik_container_name", "traefik")
+    container_paths = [
+        "/var/log/traefik/traefik.log",
+        "/var/log/traefik.log",
+    ]
 
-    if s.traefik_app_log_path and s.traefik_app_log_path.exists():
-        raw_lines = _tail(s.traefik_app_log_path, lines)
-        source = "file"
-    else:
-        container = _get_container_name(db, "traefik_container_name", "traefik")
-        docker_n = str(min(lines, 5000))
-        raw_lines = _docker_exec(container, ["tail", "-n", docker_n, "/var/log/traefik/traefik.log"])
-        if not raw_lines:
-            raw_lines = _docker_exec(container, ["tail", "-n", docker_n, "/var/log/traefik.log"])
-        if not raw_lines:
-            raw_lines = _docker_exec(container, ["sh", "-c", "cat /var/log/traefik/traefik.log 2>/dev/null || cat /tmp/traefik.log 2>/dev/null || true"])
-        if raw_lines:
-            source = "docker"
+    # Build grep terms for pre-filtering (precise filtering still done in Python)
+    grep_terms: list[str] = []
+    if search:
+        grep_terms.append(search)
+    if level:
+        grep_terms.append(_level_grep_term(level))
+
+    raw_lines, source = _read_log_lines(log_path, container, container_paths, lines, grep_terms)
 
     if not raw_lines:
         return {"available": False, "total": 0, "entries": [], "lines": lines, "source": source}
@@ -318,20 +442,20 @@ def crowdsec_logs(
 ) -> dict[str, Any]:
     """CrowdSec log — read from mounted file or via docker exec."""
     s = get_settings()
-    raw_lines: list[str] = []
-    source = "unavailable"
+    log_path = _resolve_path(db, "log_path_crowdsec", s.crowdsec_log_path)
+    container = _get_container_name(db, "crowdsec_container_name", "crowdsec")
+    container_paths = [
+        "/var/log/crowdsec/crowdsec.log",
+        "/var/log/crowdsec.log",
+    ]
 
-    if s.crowdsec_log_path and s.crowdsec_log_path.exists():
-        raw_lines = _tail(s.crowdsec_log_path, lines)
-        source = "file"
-    else:
-        container = _get_container_name(db, "crowdsec_container_name", "crowdsec")
-        docker_n = str(min(lines, 5000))
-        raw_lines = _docker_exec(container, ["tail", "-n", docker_n, "/var/log/crowdsec/crowdsec.log"])
-        if not raw_lines:
-            raw_lines = _docker_exec(container, ["tail", "-n", docker_n, "/var/log/crowdsec.log"])
-        if raw_lines:
-            source = "docker"
+    grep_terms: list[str] = []
+    if search:
+        grep_terms.append(search)
+    if level:
+        grep_terms.append(_level_grep_term(level))
+
+    raw_lines, source = _read_log_lines(log_path, container, container_paths, lines, grep_terms)
 
     if not raw_lines:
         return {"available": False, "total": 0, "entries": [], "lines": lines, "source": source}
