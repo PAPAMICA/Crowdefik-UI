@@ -1,0 +1,38 @@
+services:
+  crowdefik-backend:
+    build:
+      context: ./backend
+    container_name: crowdefik-backend
+    restart: unless-stopped
+    environment:
+      CROWDEFIK_DATABASE_URL: sqlite:////data/crowdefik.db
+      CROWDEFIK_JWT_SECRET: "${CROWDEFIK_JWT_SECRET:-change-me-to-a-long-random-secret}"
+      CROWDEFIK_APP_SECRET: "${CROWDEFIK_APP_SECRET:-change-me-to-a-long-random-secret}"
+      CROWDEFIK_BOOTSTRAP_ADMIN_USERNAME: "${CROWDEFIK_BOOTSTRAP_ADMIN_USERNAME:-admin}"
+      CROWDEFIK_BOOTSTRAP_ADMIN_PASSWORD: "${CROWDEFIK_BOOTSTRAP_ADMIN_PASSWORD:-change-me}"
+      CROWDEFIK_TRAEFIK_CUSTOM_DIR: /traefik-custom
+      CROWDEFIK_CORS_ORIGINS: "${CROWDEFIK_CORS_ORIGINS:-*}"
+    volumes:
+      - crowdefik-data:/data
+      - /_data/apps/traefik/config/custom:/traefik-custom:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - proxy
+
+  crowdefik-frontend:
+    build:
+      context: ./frontend
+    container_name: crowdefik-frontend
+    restart: unless-stopped
+    depends_on:
+      - crowdefik-backend
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+    name: proxy
+
+volumes:
+  crowdefik-data:

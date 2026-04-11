@@ -1,0 +1,27 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Data
+*.db
+*.db-wal
+*.db-shm
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Docker
+.env
+
+traefik-docker-compose.yml
+INSTRUCTION.md
