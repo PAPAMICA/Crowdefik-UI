@@ -2,7 +2,7 @@ import { Activity, RefreshCw, Shield, ShieldAlert, ShieldCheck, Wifi } from 'luc
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell,
+  Area, AreaChart, CartesianGrid, Cell,
   Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { apiFetch, getToken, wsDashboardUrl } from '../api'

@@ -269,7 +269,6 @@ export function AlertsPage() {
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
               {paged.map((a, i) => {
                 const ip = String(a.source?.ip ?? a.source?.value ?? '')
-                const cn = String(a.source?.cn ?? '')
                 const scenario = String(a.scenario ?? '')
                 const label = scenario.replace('crowdsecurity/', '')
                 const events = Number(a.events_count ?? 0)
