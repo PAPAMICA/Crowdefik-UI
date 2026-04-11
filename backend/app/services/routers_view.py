@@ -1,6 +1,7 @@
 from typing import Any
 
-from app.integrations.traefik_override import crowdsec_bypass_active, is_crowdsec_enabled_on_router
+from app.integrations.traefik_override import crowdsec_effective as compute_effective
+from app.integrations.traefik_override import is_crowdsec_enabled_on_router, override_state
 from app.settings import get_settings
 
 
@@ -24,9 +25,9 @@ def build_router_rows(routers: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         name = r["name"]
         middlewares = r.get("middlewares") or []
-        label_has_crowdsec = is_crowdsec_enabled_on_router(middlewares, crowdsec_ref)
-        bypass = crowdsec_bypass_active(settings, name)
-        effective = label_has_crowdsec and not bypass
+        label_has = is_crowdsec_enabled_on_router(middlewares, crowdsec_ref)
+        ov_state = override_state(settings, name)
+        effective = compute_effective(settings, name, label_has)
         rows.append(
             {
                 "name": name,
@@ -35,8 +36,8 @@ def build_router_rows(routers: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "entry_points": r.get("entryPoints") or [],
                 "middlewares": middlewares,
                 "priority": r.get("priority") or 0,
-                "label_crowdsec": label_has_crowdsec,
-                "bypass_file": bypass,
+                "label_crowdsec": label_has,
+                "override_state": ov_state,   # "on" | "off" | "none"
                 "crowdsec_effective": effective,
             }
         )

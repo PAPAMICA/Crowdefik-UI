@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -45,3 +45,49 @@ class InstanceSettings(Base):
     crowdsec_api_key_enc = mapped_column(Text, nullable=True)
     abuseipdb_api_key_enc = mapped_column(Text, nullable=True)
     updated_at = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+# ──────────────────────────────────────────────
+# CrowdSec data storage (rolling 7-day window)
+# ──────────────────────────────────────────────
+
+class StoredAlert(Base):
+    __tablename__ = "stored_alerts"
+    # Use CrowdSec numeric alert id as PK for idempotent upsert
+    id = mapped_column(Integer, primary_key=True)
+    scenario = mapped_column(String(512), nullable=False, default="")
+    source_ip = mapped_column(String(64), index=True, nullable=True)
+    source_country = mapped_column(String(8), nullable=True)
+    source_lat = mapped_column(Float, nullable=True)
+    source_lon = mapped_column(Float, nullable=True)
+    events_count = mapped_column(Integer, default=1, nullable=False)
+    start_at = mapped_column(DateTime, nullable=True, index=True)
+    stop_at = mapped_column(DateTime, nullable=True)
+    raw_json = mapped_column(Text, nullable=False)
+    synced_at = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class StoredDecision(Base):
+    __tablename__ = "stored_decisions"
+    id = mapped_column(Integer, primary_key=True)
+    ip_value = mapped_column(String(256), index=True, nullable=False)
+    decision_type = mapped_column(String(64), nullable=True)
+    scope = mapped_column(String(64), nullable=True)
+    scenario = mapped_column(String(512), nullable=True)
+    duration_str = mapped_column(String(64), nullable=True)
+    until = mapped_column(DateTime, nullable=True)
+    raw_json = mapped_column(Text, nullable=False)
+    synced_at = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class IpGeoCache(Base):
+    """Persistent geolocation cache so ip-api.com is not called repeatedly."""
+    __tablename__ = "ip_geo_cache"
+    ip = mapped_column(String(64), primary_key=True)
+    lat = mapped_column(Float, nullable=True)
+    lon = mapped_column(Float, nullable=True)
+    country_code = mapped_column(String(8), nullable=True)
+    country = mapped_column(String(128), nullable=True)
+    city = mapped_column(String(128), nullable=True)
+    isp = mapped_column(String(256), nullable=True)
+    updated_at = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,13 +11,40 @@ from app.db import SessionLocal, engine
 from app.models import Base, User
 from app.settings import get_settings
 
+log = logging.getLogger(__name__)
+
+SYNC_INTERVAL_SECONDS = 300  # 5 minutes
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     _run_migrations()
     _bootstrap_admin_if_needed()
+    # Background CrowdSec → DB sync
+    task = asyncio.create_task(_sync_loop())
     yield
+    task.cancel()
+
+
+async def _sync_loop() -> None:
+    # Short initial delay so the app is fully ready
+    await asyncio.sleep(5)
+    while True:
+        try:
+            await asyncio.to_thread(_do_sync)
+        except Exception as exc:
+            log.warning("Background sync failed: %s", exc)
+        await asyncio.sleep(SYNC_INTERVAL_SECONDS)
+
+
+def _do_sync() -> None:
+    db = SessionLocal()
+    try:
+        from app.services.sync_service import run_full_sync
+        run_full_sync(db)
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

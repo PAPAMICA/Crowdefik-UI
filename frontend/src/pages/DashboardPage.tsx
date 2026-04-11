@@ -1,7 +1,10 @@
 import { Activity, RefreshCw, Shield, ShieldAlert, ShieldCheck, Wifi } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import {
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts'
 import { apiFetch, getToken, wsDashboardUrl } from '../api'
 import { useAuth } from '../auth'
 
@@ -16,6 +19,7 @@ type Summary = {
   attack_types: { type: string; count: number }[]
 }
 type GeoPoint = { ip: string; lat: number; lon: number; count: number; scenario: string; country: string }
+type TimelinePoint = { date: string; count: number }
 
 const CARD_CONFIG = [
   { key: 'routers_total' as const, label: 'Exposed routers', icon: Activity, color: 'bg-violet-500/10 text-violet-500', border: 'border-violet-500/20' },
@@ -30,6 +34,7 @@ export function DashboardPage() {
   const { me, loading } = useAuth()
   const [summary, setSummary] = useState<Summary | null>(null)
   const [geo, setGeo] = useState<GeoPoint[]>([])
+  const [timeline, setTimeline] = useState<TimelinePoint[]>([])
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
 
@@ -39,6 +44,9 @@ export function DashboardPage() {
     })
     void apiFetch('/api/dashboard/geo').then(async (r) => {
       if (r.ok) setGeo((await r.json()) as GeoPoint[])
+    })
+    void apiFetch('/api/dashboard/timeline').then(async (r) => {
+      if (r.ok) setTimeline((await r.json()) as TimelinePoint[])
     })
   }, [])
 
@@ -169,6 +177,39 @@ export function DashboardPage() {
         </div>
       </div>
 
+      {/* Alert timeline */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+        <div className="mb-4 flex items-center gap-2">
+          <Activity className="h-4 w-4 text-blue-500" />
+          <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Alerts — last 7 days</span>
+        </div>
+        {timeline.length ? (
+          <ResponsiveContainer width="100%" height={180}>
+            <AreaChart data={timeline} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+              <defs>
+                <linearGradient id="alertGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" vertical={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}
+                tickFormatter={(v) => v.slice(5)} />
+              <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <Tooltip
+                contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+                labelStyle={{ color: '#f1f5f9' }}
+                itemStyle={{ color: '#94a3b8' }}
+              />
+              <Area type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={2}
+                fill="url(#alertGrad)" dot={{ r: 3, fill: '#6366f1' }} />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="flex h-[180px] items-center justify-center text-sm text-slate-400">No data yet</div>
+        )}
+      </div>
+
       {/* Map */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
         <div className="mb-4 flex items-center justify-between">
@@ -183,8 +224,9 @@ export function DashboardPage() {
             <AttackerMap points={geo} />
           </Suspense>
         ) : (
-          <div className="flex h-64 items-center justify-center text-sm text-slate-400">
-            No geolocation data — requires CrowdSec alerts with location info
+          <div className="flex h-64 flex-col items-center justify-center gap-2 text-sm text-slate-400">
+            <span>No geolocation data yet</span>
+            <span className="text-xs">Data populates automatically every 5 minutes from CrowdSec alerts</span>
           </div>
         )}
       </div>
