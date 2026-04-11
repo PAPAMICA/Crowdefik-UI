@@ -223,6 +223,15 @@ def validate_machine(
     return result
 
 
+@router.get("/metrics")
+def get_crowdsec_metrics(
+    db: Annotated[Session, Depends(get_db)],
+    _user: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    """Fetch all CrowdSec metrics via `cscli metrics -o json`."""
+    return docker_svc.cscli_metrics(_container_name(db))
+
+
 @router.get("/status")
 def crowdsec_status(
     db: Annotated[Session, Depends(get_db)],

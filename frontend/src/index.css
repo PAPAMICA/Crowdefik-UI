@@ -48,9 +48,9 @@ html.dark body {
   overflow: visible;
 }
 
-/* Dark-mode tile tint */
+/* Dark-mode tile tint for OpenStreetMap tiles */
 html.dark .leaflet-tile-pane {
-  filter: brightness(0.85) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+  filter: brightness(0.6) invert(1) hue-rotate(180deg) contrast(1.1) saturate(0.4);
 }
 
 /* Scrollbar styling */

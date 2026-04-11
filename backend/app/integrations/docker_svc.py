@@ -89,6 +89,11 @@ def cscli_validate_machine(machine_id: str, container_name: str = "crowdsec") ->
     return _cscli(container_name, ["machines", "validate", machine_id])
 
 
+def cscli_metrics(container_name: str = "crowdsec") -> dict[str, Any]:
+    """Run `cscli metrics -o json` and return parsed output."""
+    return _cscli(container_name, ["metrics"])
+
+
 def test_connection() -> dict[str, Any]:
     """Return Docker daemon version or error."""
     try:
