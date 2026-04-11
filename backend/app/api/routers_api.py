@@ -1,5 +1,4 @@
 import re
-import ssl
 from urllib.parse import urlparse
 from typing import Annotated, Literal
 
@@ -91,24 +90,17 @@ def waf_test(
     parsed = urlparse(str(instance.traefik_api_url))
     traefik_internal = parsed.hostname or "traefik"
 
-    # XSS payload — triggers CrowdSec AppSec generic XSS rule
-    payload = "?waf_probe=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
-    # URL used for display only (readable)
-    display_url = f"https://{host}/{payload}"
-    # Actual probe goes to Traefik's internal HTTPS port
-    probe_url = f"https://{traefik_internal}{payload}"
-
-    # Disable cert verification — we don't care about the cert of the internal endpoint
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
+    # Probe path: /.env triggers CrowdSec AppSec "sensitive file access" rule.
+    # A 403 means WAF is active; any other status means WAF is not protecting
+    # this route (or AppSec is disabled).
+    probe_path = "/.env"
+    display_url = f"https://{host}{probe_path}"
+    probe_url   = f"https://{traefik_internal}{probe_path}"
 
     try:
-        with httpx.Client(
-            transport=httpx.HTTPTransport(ssl=ssl_ctx),
-            timeout=8.0,
-            follow_redirects=False,
-        ) as client:
+        # verify=False disables TLS certificate verification entirely — we only
+        # care about the HTTP response code, not the cert of the internal endpoint.
+        with httpx.Client(verify=False, timeout=8.0, follow_redirects=False) as client:
             r = client.get(
                 probe_url,
                 headers={
@@ -116,19 +108,17 @@ def waf_test(
                     "User-Agent": "Crowdefik-WAF-Probe/1.0",
                 },
             )
-            blocked = r.status_code in (403, 406)
+            blocked = r.status_code == 403
             return {
                 "blocked": blocked,
                 "status_code": r.status_code,
                 "url": display_url,
-                "probe_url": probe_url,
             }
     except httpx.ConnectError as exc:
         return {
             "blocked": False,
             "status_code": None,
             "url": display_url,
-            "probe_url": probe_url,
             "error": f"Cannot reach Traefik at {traefik_internal}:443 — {exc}",
         }
     except Exception as exc:
@@ -136,7 +126,6 @@ def waf_test(
             "blocked": False,
             "status_code": None,
             "url": display_url,
-            "probe_url": probe_url,
             "error": str(exc)[:300],
         }
 

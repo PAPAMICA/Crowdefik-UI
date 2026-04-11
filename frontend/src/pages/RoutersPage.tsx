@@ -52,17 +52,17 @@ function WafBadge({ result }: { result: WafResult | null | 'loading' | 'idle' })
     return (
       <span
         className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
-        title={`HTTP ${result.status_code} — request was blocked`}
+        title={`Probe GET /.env → HTTP ${result.status_code} — WAF is active`}
       >
-        WAF ✓ blocked ({result.status_code})
+        WAF ✓ actif (403)
       </span>
     )
   return (
     <span
       className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-600 dark:text-red-400"
-      title={`HTTP ${result.status_code ?? '?'} — request was NOT blocked`}
+      title={`Probe GET /.env → HTTP ${result.status_code ?? '?'} — WAF is NOT active on this service`}
     >
-      WAF ✗ not blocked ({result.status_code ?? '?'})
+      WAF ✗ inactif ({result.status_code ?? '?'})
     </span>
   )
 }
