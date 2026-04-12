@@ -191,7 +191,7 @@ export function LogsAccessPage() {
                   <XAxis type="number" hide />
                   <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={80} />
                   <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
-                    formatter={(v: unknown) => [v, 'Requests']} />
+                    formatter={(v: unknown) => [String(v ?? ''), 'Requests']} />
                   <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14}>
                     {stats!.top_hosts.slice(0, 6).map((_, idx) => <Cell key={idx} fill={`hsl(${250 + idx * 20}, 65%, 55%)`} />)}
                   </Bar>
@@ -211,7 +211,7 @@ export function LogsAccessPage() {
                   <XAxis type="number" hide />
                   <YAxis type="category" dataKey="method" tick={{ fontSize: 9, fill: '#94a3b8', fontFamily: 'monospace' }} axisLine={false} tickLine={false} width={40} />
                   <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
-                    formatter={(v: unknown) => [v, 'Requests']} />
+                    formatter={(v: unknown) => [String(v ?? ''), 'Requests']} />
                   <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14} fill="#6366f1" />
                 </BarChart>
               </ResponsiveContainer>
@@ -231,7 +231,7 @@ export function LogsAccessPage() {
                     <XAxis dataKey="status" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
                     <YAxis hide />
                     <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
-                      formatter={(v: unknown) => [v, 'Requests']} />
+                      formatter={(v: unknown) => [String(v ?? ''), 'Requests']} />
                     <Bar dataKey="count" radius={[3, 3, 0, 0]} maxBarSize={30}>
                       {stats!.status_dist.map((s) => <Cell key={s.status} fill={STATUS_COLORS[s.status] ?? '#94a3b8'} />)}
                     </Bar>
@@ -261,7 +261,7 @@ export function LogsAccessPage() {
                   <XAxis type="number" hide />
                   <YAxis type="category" dataKey="ip" tick={{ fontSize: 8, fill: '#94a3b8', fontFamily: 'monospace' }} axisLine={false} tickLine={false} width={90} />
                   <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
-                    formatter={(v: unknown) => [v, 'Requests']} />
+                    formatter={(v: unknown) => [String(v ?? ''), 'Requests']} />
                   <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14}>
                     {stats!.top_ips.slice(0, 6).map((_, idx) => <Cell key={idx} fill={`hsl(${10 + idx * 20}, 70%, 55%)`} />)}
                   </Bar>

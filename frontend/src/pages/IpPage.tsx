@@ -313,7 +313,7 @@ export function IpPage() {
                 <YAxis type="category" dataKey="host" tick={{ fontSize: 10, fill: '#94a3b8', fontFamily: 'monospace' }}
                   axisLine={false} tickLine={false} width={130} />
                 <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v: unknown) => [v, 'Events']} />
+                  formatter={(v: unknown) => [String(v ?? ''), 'Events']} />
                 <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={18}>
                   {dist.map((_, idx) => (
                     <Cell key={idx} fill={`hsl(${250 + idx * 25}, 65%, 55%)`} />
