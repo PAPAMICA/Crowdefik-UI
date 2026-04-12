@@ -20,5 +20,13 @@ if [ -S /var/run/docker.sock ]; then
     fi
 fi
 
+# ─── Traefik custom-config directory write permissions ────────────────────────
+# The /traefik-custom volume is bind-mounted from the host and may be owned by
+# root. appuser needs write access to create CrowdSec override YAML files.
+if [ -d /traefik-custom ]; then
+    chown appuser /traefik-custom 2>/dev/null || \
+    chmod o+w  /traefik-custom 2>/dev/null || true
+fi
+
 # ─── Drop privileges and exec ─────────────────────────────────────────────────
 exec gosu appuser "$@"

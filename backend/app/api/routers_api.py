@@ -199,28 +199,40 @@ def set_crowdsec(
             detail="Router has no rule or service — cannot write override.",
         )
 
-    if body.action == "enable":
-        write_override(
-            settings,
-            router_name=router_name,
-            rule=rule,
-            service=service,
-            entry_points=entry_points,
-            base_priority=base_priority,
-            with_crowdsec=True,
-        )
-    elif body.action == "disable":
-        write_override(
-            settings,
-            router_name=router_name,
-            rule=rule,
-            service=service,
-            entry_points=entry_points,
-            base_priority=base_priority,
-            with_crowdsec=False,
-        )
-    elif body.action == "reset":
-        remove_override(settings, router_name)
+    try:
+        if body.action == "enable":
+            write_override(
+                settings,
+                router_name=router_name,
+                rule=rule,
+                service=service,
+                entry_points=entry_points,
+                base_priority=base_priority,
+                with_crowdsec=True,
+            )
+        elif body.action == "disable":
+            write_override(
+                settings,
+                router_name=router_name,
+                rule=rule,
+                service=service,
+                entry_points=entry_points,
+                base_priority=base_priority,
+                with_crowdsec=False,
+            )
+        elif body.action == "reset":
+            remove_override(settings, router_name)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Cannot write override file — permission denied on {settings.traefik_custom_dir}. "
+                   f"Check that the directory is writable by the backend container (appuser uid=1000). Error: {exc}",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to write override file: {exc}",
+        ) from exc
 
     cache_mod.invalidate_prefix("traefik:")
     log_action(db, user, f"crowdsec_{body.action}", target=router_name)

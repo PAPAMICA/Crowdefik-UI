@@ -331,7 +331,8 @@ export function DecisionsPage() {
         addToast(`Decision #${confirmUnban.id} removed`, 'success')
         void loadData()
       } else {
-        addToast('Failed to remove decision', 'error')
+        const err = await res.json().catch(() => ({}))
+        addToast((err as { detail?: string }).detail ?? `Failed to remove decision (HTTP ${res.status})`, 'error')
       }
     } finally {
       setUnbanning(false)

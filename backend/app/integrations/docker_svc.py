@@ -113,6 +113,16 @@ def _cscli_cmd(container_name: str, args: list[str]) -> dict[str, Any]:
     return result
 
 
+def cscli_delete_decision(decision_id: int, container_name: str = "crowdsec") -> dict[str, Any]:
+    """Delete a CrowdSec decision by ID using cscli (bypasses REST API auth issues)."""
+    return _cscli_cmd(container_name, ["decisions", "delete", "--id", str(decision_id)])
+
+
+def cscli_delete_decision_by_ip(ip: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    """Delete all CrowdSec decisions for an IP using cscli."""
+    return _cscli_cmd(container_name, ["decisions", "delete", "--ip", ip])
+
+
 def cscli_list_bouncers(container_name: str = "crowdsec") -> dict[str, Any]:
     return _cscli_json(container_name, ["bouncers", "list"])
 

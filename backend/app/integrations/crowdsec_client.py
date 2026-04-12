@@ -368,19 +368,38 @@ def get_machines(db: Session) -> list[dict[str, Any]]:
 def delete_decision(db: Session, decision_id: int) -> dict[str, Any]:
     """Delete (unban) a decision by its CrowdSec ID.
 
-    Requires watcher (machine) JWT — the bouncer key is read-only.
-    Falls back to bouncer key only as a last resort (older LAPI setups).
+    Strategy:
+    1. Try cscli via Docker exec (most reliable, bypasses REST API auth issues).
+    2. Fall back to REST API with bouncer key (per CrowdSec spec: ApiKeyAuth).
+    3. Fall back to REST API with watcher JWT if bouncer key also fails.
     """
+    from app.integrations import docker_svc
+    from app.integrations.instance_settings import get_or_create_instance_settings
+
+    s = get_or_create_instance_settings(db)
+    container = getattr(s, "crowdsec_container_name", None) or "crowdsec"
+
+    # 1. cscli via Docker (preferred — no REST auth issues)
+    cscli_result = docker_svc.cscli_delete_decision(decision_id, container)
+    if cscli_result.get("ok"):
+        log.info("Decision %d deleted via cscli", decision_id)
+        return {"ok": True, "id": decision_id}
+
+    log.info("cscli delete failed (%s), falling back to REST API", cscli_result.get("error"))
+
+    # 2. REST API fallback — bouncer key (ApiKeyAuth per CrowdSec spec)
     base = _base(db)
-    # Prefer watcher JWT; bouncer key cannot delete decisions on most LAPI versions
-    h = _watcher_headers(db) or _bouncer_headers(db)
+    h = _bouncer_headers(db) or _watcher_headers(db)
     if not h:
-        return {"ok": False, "error": "No API credentials configured (need machine login or bouncer key)"}
+        return {"ok": False, "error": f"cscli failed: {cscli_result.get('error')} — and no API credentials configured"}
     try:
         with httpx.Client(timeout=8.0) as client:
             r = client.delete(f"{base}/v1/decisions/{decision_id}", headers=h)
-            if r.status_code == 403 and _watcher_headers(db) is None:
-                return {"ok": False, "error": "403 Forbidden — configure machine credentials (watcher) to delete decisions"}
+            if r.status_code == 403:
+                # Try the other auth method
+                h2 = _watcher_headers(db) if "X-Api-Key" in h else _bouncer_headers(db)
+                if h2:
+                    r = client.delete(f"{base}/v1/decisions/{decision_id}", headers=h2)
             r.raise_for_status()
             return {"ok": True, "id": decision_id}
     except httpx.HTTPStatusError as exc:
