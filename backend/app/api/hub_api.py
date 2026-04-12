@@ -251,6 +251,72 @@ def remove_collection(
     return {"ok": True, "name": name}
 
 
+# ── Hub catalog (all available, not just installed) ────────────────────────────
+
+@router.get("/catalog")
+def hub_catalog(
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Return all available hub items with their installed status.
+
+    Calls `cscli scenarios list --all` and `cscli collections list --all`.
+    Falls back to installed-only lists if --all flag is not supported.
+    """
+    container = _container_name(db)
+    s_res = docker_svc.cscli_list_all_scenarios(container)
+    c_res = docker_svc.cscli_list_all_collections(container)
+    counts = _scenario_alert_counts(db)
+
+    def _parse_items(result: dict[str, Any]) -> list[dict[str, Any]]:
+        if not result.get("ok"):
+            return []
+        raw = result.get("data") or []
+        return _normalize_hub_items(raw)
+
+    def _scenario_entry(s: dict[str, Any]) -> dict[str, Any]:
+        name_full = s.get("name") or s.get("Name") or ""
+        installed = bool(s.get("installed") or s.get("Installed") or s.get("local_path") or s.get("LocalPath"))
+        # Fallback: if no "installed" field, assume installed if it has a local_path
+        if not installed and (s.get("status") or s.get("Status") or ""):
+            status_val = (s.get("status") or s.get("Status") or "").lower()
+            installed = status_val not in ("", "not installed", "available")
+        return {
+            "name": name_full,
+            "description": s.get("description") or s.get("Description") or "",
+            "version": s.get("version") or s.get("Version") or "",
+            "status": s.get("status") or s.get("Status") or ("installed" if installed else "available"),
+            "up_to_date": s.get("up_to_date") or s.get("UpToDate") or False,
+            "tainted": s.get("tainted") or s.get("Tainted") or False,
+            "installed": installed,
+            "alert_count": counts.get(name_full, 0),
+        }
+
+    def _collection_entry(c: dict[str, Any]) -> dict[str, Any]:
+        installed = bool(c.get("installed") or c.get("Installed") or c.get("local_path") or c.get("LocalPath"))
+        if not installed:
+            status_val = (c.get("status") or c.get("Status") or "").lower()
+            installed = status_val not in ("", "not installed", "available")
+        return {
+            "name": c.get("name") or c.get("Name") or "",
+            "description": c.get("description") or c.get("Description") or "",
+            "version": c.get("version") or c.get("Version") or "",
+            "status": c.get("status") or c.get("Status") or ("installed" if installed else "available"),
+            "up_to_date": c.get("up_to_date") or c.get("UpToDate") or False,
+            "tainted": c.get("tainted") or c.get("Tainted") or False,
+            "installed": installed,
+        }
+
+    scenarios = [_scenario_entry(s) for s in _parse_items(s_res)]
+    collections = [_collection_entry(c) for c in _parse_items(c_res)]
+
+    return {
+        "ok": True,
+        "scenarios": sorted(scenarios, key=lambda x: (-x["alert_count"], x["name"])),
+        "collections": sorted(collections, key=lambda x: x["name"]),
+    }
+
+
 # ── Hub operations ─────────────────────────────────────────────────────────────
 
 @router.post("/update")

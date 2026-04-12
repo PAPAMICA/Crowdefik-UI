@@ -225,6 +225,16 @@ def cscli_remove_collection(name: str, container_name: str = "crowdsec") -> dict
     return _cscli_cmd(container_name, ["collections", "remove", name, "--purge"])
 
 
+def cscli_list_all_scenarios(container_name: str = "crowdsec") -> dict[str, Any]:
+    """List ALL hub scenarios (installed + available) via `cscli scenarios list --all`."""
+    return _cscli_json(container_name, ["scenarios", "list", "--all"])
+
+
+def cscli_list_all_collections(container_name: str = "crowdsec") -> dict[str, Any]:
+    """List ALL hub collections (installed + available) via `cscli collections list --all`."""
+    return _cscli_json(container_name, ["collections", "list", "--all"])
+
+
 def test_connection() -> dict[str, Any]:
     """Return Docker daemon version or error."""
     try:

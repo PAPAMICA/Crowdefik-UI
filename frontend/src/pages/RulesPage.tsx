@@ -1,7 +1,7 @@
 import {
   AlertTriangle, BookOpen, CheckCircle, ChevronRight,
-  Download, Globe, Layers, Loader2, Plus, RefreshCw,
-  Save, Settings2, Shield, ShieldAlert, ShieldOff, Trash2, Upload,
+  Download, Globe, Info, Layers, Loader2, Package, Plus, RefreshCw,
+  Save, Search, Settings2, Shield, ShieldAlert, ShieldOff, Trash2, Upload,
   Zap,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -45,7 +45,18 @@ type Policy = {
   updated_at: string | null
 }
 
-type TabId = 'scenarios' | 'collections' | 'global' | 'services'
+type CatalogItem = {
+  name: string
+  description: string
+  version: string
+  status: string
+  up_to_date: boolean
+  tainted: boolean
+  installed: boolean
+  alert_count?: number
+}
+
+type TabId = 'scenarios' | 'collections' | 'hub' | 'global' | 'services'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -333,6 +344,12 @@ export function RulesPage() {
   const [globalPolicy, setGlobalPolicy] = useState<Policy | null>(null)
   const [savingGlobal, setSavingGlobal] = useState(false)
 
+  // Hub catalog tab
+  const [catalog, setCatalog] = useState<{ scenarios: CatalogItem[]; collections: CatalogItem[] } | null>(null)
+  const [loadingCatalog, setLoadingCatalog] = useState(false)
+  const [catalogSearch, setCatalogSearch] = useState('')
+  const [catalogType, setCatalogType] = useState<'all' | 'scenarios' | 'collections'>('all')
+
   // Per-service policies tab
   const [servicePolicies, setServicePolicies] = useState<Policy[]>([])
   const [loadingServices, setLoadingServices] = useState(false)
@@ -389,12 +406,30 @@ export function RulesPage() {
     }
   }
 
+  async function loadCatalog() {
+    setLoadingCatalog(true)
+    try {
+      const r = await apiFetch('/api/crowdsec/hub/catalog')
+      if (r.ok) {
+        const d = await r.json() as { ok: boolean; scenarios: CatalogItem[]; collections: CatalogItem[]; error?: string }
+        if (d.ok) setCatalog({ scenarios: d.scenarios, collections: d.collections })
+        else addToast(d.error ?? 'Failed to load catalog', 'error')
+      }
+    } finally {
+      setLoadingCatalog(false)
+    }
+  }
+
   useEffect(() => {
     void loadScenarios()
     void loadCollections()
     void loadGlobalPolicy()
     void loadServicePolicies()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (tab === 'hub' && !catalog) void loadCatalog()
+  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleHubUpdate() {
     setUpdatingHub(true)
@@ -512,9 +547,25 @@ export function RulesPage() {
 
   if (!loading && !me) return <Navigate to="/login" replace />
 
+  const catalogFiltered = useMemo(() => {
+    if (!catalog) return []
+    const q = catalogSearch.toLowerCase()
+    const scenarioItems = catalogType !== 'collections' ? catalog.scenarios.map((s) => ({ ...s, type: 'scenario' as const })) : []
+    const collectionItems = catalogType !== 'scenarios' ? catalog.collections.map((c) => ({ ...c, type: 'collection' as const })) : []
+    return [...scenarioItems, ...collectionItems].filter(
+      (i) => !q || i.name.toLowerCase().includes(q) || i.description.toLowerCase().includes(q),
+    )
+  }, [catalog, catalogSearch, catalogType])
+
+  const catalogAvailableCount = useMemo(() => {
+    if (!catalog) return 0
+    return catalog.scenarios.filter((s) => !s.installed).length + catalog.collections.filter((c) => !c.installed).length
+  }, [catalog])
+
   const TABS: { id: TabId; label: string; icon: React.ElementType; color: string; count?: number }[] = [
     { id: 'scenarios',   label: 'Scenarios',       icon: ShieldAlert, color: 'text-violet-500', count: scenarios.length },
     { id: 'collections', label: 'Collections',     icon: Layers,      color: 'text-blue-500',   count: collections.length },
+    { id: 'hub',         label: 'Hub',             icon: Package,     color: 'text-teal-500',   count: catalogAvailableCount || undefined },
     { id: 'global',      label: 'Global policy',   icon: Globe,       color: 'text-emerald-500' },
     { id: 'services',    label: 'Per-service',      icon: Settings2,   color: 'text-amber-500',  count: servicePolicies.length },
   ]
@@ -572,6 +623,13 @@ export function RulesPage() {
       {/* ── Scenarios ─────────────────────────────────────────────────────── */}
       {tab === 'scenarios' && (
         <div className="space-y-4">
+          <div className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50/60 px-4 py-3 text-xs text-blue-800 dark:border-blue-500/30 dark:bg-blue-900/20 dark:text-blue-300">
+            <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <span>
+              Le statut <strong>"Update available"</strong> signifie que l'index local du hub n'a pas été synchronisé récemment.
+              Cliquez sur <strong>"Update hub"</strong> (en haut à droite) pour rafraîchir les statuts et voir si des mises à jour sont réellement disponibles.
+            </span>
+          </div>
           <div className="flex gap-3">
             <input
               className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
@@ -656,6 +714,192 @@ export function RulesPage() {
                         {scenarios.length === 0
                           ? 'Could not load scenarios — ensure Docker socket is mounted and the CrowdSec container is running'
                           : 'No scenarios match the filter'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Hub catalog ───────────────────────────────────────────────────── */}
+      {tab === 'hub' && (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 rounded-xl border border-teal-200 bg-teal-50/60 px-4 py-3 text-xs text-teal-800 dark:border-teal-500/30 dark:bg-teal-900/20 dark:text-teal-300">
+            <Package className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <span>
+              Parcourez tous les scénarios et collections disponibles sur le <strong>CrowdSec Hub</strong>.
+              Cliquez sur <strong>"Install"</strong> pour ajouter un nouveau plugin. Pensez à cliquer sur <strong>"Update hub"</strong> d'abord pour avoir la liste la plus récente.
+            </span>
+          </div>
+
+          {/* Filters */}
+          <div className="flex flex-wrap gap-3">
+            <div className="relative flex-1 min-w-40">
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                placeholder="Rechercher dans le hub…"
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-800">
+              {(['all', 'scenarios', 'collections'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setCatalogType(t)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${catalogType === t ? 'bg-teal-500 text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                >
+                  {t === 'all' ? 'Tout' : t === 'scenarios' ? 'Scénarios' : 'Collections'}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadCatalog()}
+              disabled={loadingCatalog}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+            >
+              <RefreshCw className={`h-4 w-4 ${loadingCatalog ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          {/* Stats */}
+          {catalog && (
+            <div className="flex flex-wrap gap-3 text-xs text-slate-500 dark:text-slate-400">
+              <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-700">
+                {catalog.scenarios.filter((s) => s.installed).length} scénarios installés / {catalog.scenarios.length} disponibles
+              </span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-700">
+                {catalog.collections.filter((c) => c.installed).length} collections installées / {catalog.collections.length} disponibles
+              </span>
+              {catalogAvailableCount > 0 && (
+                <span className="rounded-full bg-teal-500/10 px-3 py-1 text-teal-700 dark:text-teal-400">
+                  {catalogAvailableCount} non installés
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Table */}
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700/50 dark:bg-slate-800/60">
+            {loadingCatalog ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-slate-700/50">
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Nom</th>
+                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400 md:table-cell">Description</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Type</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Statut</th>
+                    {me?.is_superuser && <th className="px-4 py-3" />}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                  {catalogFiltered.map((item) => (
+                    <tr key={`${item.type}-${item.name}`} className={`hover:bg-slate-50/70 dark:hover:bg-white/5 ${!item.installed ? 'bg-teal-50/20 dark:bg-teal-900/5' : ''}`}>
+                      <td className="px-4 py-3">
+                        <span className="font-mono text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          {item.name.replace(/^(crowdsecurity|ltsich)\//, '')}
+                        </span>
+                        {item.version && <div className="text-[11px] text-slate-400">v{item.version}</div>}
+                      </td>
+                      <td className="hidden px-4 py-3 text-xs text-slate-500 dark:text-slate-400 md:table-cell max-w-xs">
+                        <span className="line-clamp-2">{item.description}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          item.type === 'collection'
+                            ? 'bg-blue-500/10 text-blue-700 dark:text-blue-400'
+                            : 'bg-violet-500/10 text-violet-700 dark:text-violet-400'
+                        }`}>
+                          {item.type === 'collection' ? <Layers className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
+                          {item.type === 'collection' ? 'Collection' : 'Scénario'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {item.installed ? (
+                          item.tainted ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                              <AlertTriangle className="h-3 w-3" /> Modifié
+                            </span>
+                          ) : item.up_to_date ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+                              <CheckCircle className="h-3 w-3" /> Installé
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:text-blue-400">
+                              <Upload className="h-3 w-3" /> Màj dispo
+                            </span>
+                          )
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                            <Download className="h-3 w-3" /> Disponible
+                          </span>
+                        )}
+                      </td>
+                      {me?.is_superuser && (
+                        <td className="px-4 py-3">
+                          <div className="flex justify-end gap-2">
+                            {!item.installed ? (
+                              <button
+                                type="button"
+                                onClick={() => void (item.type === 'collection'
+                                  ? handleInstallCollection(item.name)
+                                  : handleInstallScenario(item.name)
+                                )}
+                                disabled={installing === item.name}
+                                className="inline-flex items-center gap-1 rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-medium text-teal-700 hover:bg-teal-100 disabled:opacity-50 dark:border-teal-500/30 dark:bg-teal-900/20 dark:text-teal-400"
+                              >
+                                {installing === item.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+                                Install
+                              </button>
+                            ) : !item.up_to_date ? (
+                              <button
+                                type="button"
+                                onClick={() => void (item.type === 'collection'
+                                  ? handleInstallCollection(item.name, true)
+                                  : handleInstallScenario(item.name, true)
+                                )}
+                                disabled={installing === item.name}
+                                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50 dark:border-blue-500/30 dark:bg-blue-900/20 dark:text-blue-400"
+                              >
+                                {installing === item.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                                Update
+                              </button>
+                            ) : null}
+                            {item.installed && (
+                              <button
+                                type="button"
+                                onClick={() => void (item.type === 'collection'
+                                  ? handleRemoveCollection(item.name)
+                                  : handleRemoveScenario(item.name)
+                                )}
+                                disabled={removing === item.name}
+                                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-500/30 dark:bg-red-900/20 dark:text-red-400"
+                              >
+                                {removing === item.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                  {!loadingCatalog && catalogFiltered.length === 0 && (
+                    <tr>
+                      <td colSpan={me?.is_superuser ? 5 : 4} className="px-4 py-12 text-center text-sm text-slate-400">
+                        {!catalog
+                          ? 'Impossible de charger le catalogue — assurez-vous que le socket Docker est monté et que le hub est à jour'
+                          : 'Aucun résultat pour ce filtre'}
                       </td>
                     </tr>
                   )}
