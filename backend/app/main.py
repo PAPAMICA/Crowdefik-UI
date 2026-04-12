@@ -166,25 +166,53 @@ def _run_migrations() -> None:
     """
     Apply each migration independently so a failure on one never blocks the others.
     Each migration is: try the check query; if it fails (column/table absent) run the ALTER.
-    Both the check and the alter are individually try/excepted so the loop always completes.
+
+    PostgreSQL-specific: when a statement fails inside a connection, the transaction
+    is left in an "aborted" state and all subsequent commands are ignored until a
+    ROLLBACK is issued.  We therefore use TWO separate connections:
+      1. A read-only connection to run the check query (discarded on failure).
+      2. A fresh connection (clean transaction) to run the ALTER.
+    This avoids the "InFailedSqlTransaction" error on PostgreSQL while remaining
+    fully compatible with SQLite (which ignores rollbacks on non-transaction errors).
     """
     log.info("Running %d DB migration checks…", len(_MIGRATIONS))
     for check_sql, alter_sql in _MIGRATIONS:
-        # Use a fresh connection per migration so a failed transaction doesn't
-        # leave the connection in an error state for subsequent migrations.
+        needs_alter = False
+        # Step 1: probe with a dedicated connection — let it be discarded on failure
+        try:
+            with engine.connect() as probe:
+                try:
+                    probe.exec_driver_sql(check_sql)
+                    # Check passed → column/table already exists, nothing to do.
+                except Exception:
+                    needs_alter = True
+                    # Explicitly roll back so the connection is left clean
+                    # (required by PostgreSQL; harmless on SQLite).
+                    try:
+                        probe.rollback()
+                    except Exception:
+                        pass
+        except Exception as conn_exc:
+            log.warning("Migration probe connection error for '%s': %s", alter_sql, conn_exc)
+            continue
+
+        if not needs_alter:
+            continue
+
+        # Step 2: apply the migration on a fresh, clean connection
         try:
             with engine.connect() as conn:
                 try:
-                    conn.exec_driver_sql(check_sql)
-                    # Check passed → column already exists, nothing to do.
-                except Exception:
+                    log.info("Applying migration: %s", alter_sql)
+                    conn.exec_driver_sql(alter_sql)
+                    conn.commit()
+                    log.info("Migration applied OK: %s", alter_sql)
+                except Exception as alter_exc:
+                    log.warning("Migration ALTER failed (will retry on next start): %s — %s", alter_sql, alter_exc)
                     try:
-                        log.info("Applying migration: %s", alter_sql)
-                        conn.exec_driver_sql(alter_sql)
-                        conn.commit()
-                        log.info("Migration applied OK: %s", alter_sql)
-                    except Exception as alter_exc:
-                        log.warning("Migration ALTER failed (will retry on next start): %s — %s", alter_sql, alter_exc)
+                        conn.rollback()
+                    except Exception:
+                        pass
         except Exception as conn_exc:
             log.warning("Migration connection error for '%s': %s", alter_sql, conn_exc)
 
