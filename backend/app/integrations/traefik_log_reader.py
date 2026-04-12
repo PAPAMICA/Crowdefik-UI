@@ -18,25 +18,27 @@ from urllib.parse import unquote
 log = logging.getLogger(__name__)
 
 # ── Tuning constants ──────────────────────────────────────────────────────────
-# Tail enough lines to cover 3 days of typical traffic on a busy server.
-TAIL_LINES = 200_000
+# 50 k lines ≈ several days of typical traffic; keeps memory usage under ~150 MB.
+# Increase only if you have very high-traffic services and need deeper history.
+TAIL_LINES = 50_000
 # Correlation window: WAF alerts may arrive minutes after the request; allow 5 min.
 MATCH_WINDOW_SECONDS = 300
 # Keep log entries up to 72 hours for backfill of older alerts.
 LOOKBACK_HOURS = 72
 
 # ── Index cache ───────────────────────────────────────────────────────────────
-# The index is expensive to build (parse 200 k lines). Cache it for INDEX_TTL
-# seconds so that interactive "enrich" button clicks reuse the same index
-# instead of re-reading the file on every request.
+# Building the index is expensive (parse 50 k lines + build IP dict).
+# Cache it for INDEX_TTL seconds so interactive "enrich" clicks and the
+# background sync share the same already-built index.
+# Docker-based indexes are keyed as "docker:<container>:<path>" instead of a file path.
 
 _INDEX_TTL = 120  # seconds — refreshed automatically on each sync cycle
-_index_cache: dict[str, tuple[float, dict]] = {}  # path → (built_at, index)
+_index_cache: dict[str, tuple[float, dict]] = {}  # key → (built_at, index)
 _index_lock = threading.Lock()
 
 
 def get_cached_index(log_path: Path) -> dict[str, list[dict[str, Any]]]:
-    """Return a cached IP→entries index, rebuilding it if older than INDEX_TTL."""
+    """Return a cached IP→entries index from a file path, rebuilding if stale."""
     key = str(log_path)
     now = time.monotonic()
     with _index_lock:
@@ -46,6 +48,29 @@ def get_cached_index(log_path: Path) -> dict[str, list[dict[str, Any]]]:
                 return cached
     # Build outside the lock so we don't block other threads during I/O
     fresh = build_ip_host_index(log_path)
+    with _index_lock:
+        _index_cache[key] = (now, fresh)
+    return fresh
+
+
+def get_cached_docker_index(
+    container: str,
+    log_paths: list[str] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return a cached IP→entries index read from a Docker container, rebuilding if stale.
+
+    Uses "docker:<container>" as the cache key so multiple calls within INDEX_TTL
+    seconds reuse the same in-memory index instead of re-running docker exec.
+    """
+    key = f"docker:{container}"
+    now = time.monotonic()
+    with _index_lock:
+        if key in _index_cache:
+            built_at, cached = _index_cache[key]
+            if now - built_at < _INDEX_TTL:
+                return cached
+    # Build outside the lock
+    fresh = build_ip_host_index(None, docker_container=container, docker_log_paths=log_paths)
     with _index_lock:
         _index_cache[key] = (now, fresh)
     return fresh

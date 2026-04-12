@@ -413,16 +413,17 @@ export function RulesPage() {
     }
   }
 
-  async function handleInstallScenario(name: string) {
+  async function handleInstallScenario(name: string, upgrade = false) {
     setInstalling(name)
     try {
-      const r = await apiFetch(`/api/crowdsec/hub/scenarios/${encodeURIComponent(name)}/install`, { method: 'POST' })
+      const action = upgrade ? 'upgrade' : 'install'
+      const r = await apiFetch(`/api/crowdsec/hub/scenarios/${encodeURIComponent(name)}/${action}`, { method: 'POST' })
       if (r.ok) {
-        addToast(`${name} installed`, 'success')
+        addToast(upgrade ? `${name} updated` : `${name} installed`, 'success')
         await loadScenarios()
       } else {
         const err = await r.json().catch(() => ({}))
-        addToast((err as { detail?: string }).detail ?? 'Install failed', 'error')
+        addToast((err as { detail?: string }).detail ?? (upgrade ? 'Update failed' : 'Install failed'), 'error')
       }
     } finally {
       setInstalling(null)
@@ -446,17 +447,18 @@ export function RulesPage() {
     }
   }
 
-  async function handleInstallCollection(name: string) {
+  async function handleInstallCollection(name: string, upgrade = false) {
     setInstalling(name)
     try {
-      const r = await apiFetch(`/api/crowdsec/hub/collections/${encodeURIComponent(name)}/install`, { method: 'POST' })
+      const action = upgrade ? 'upgrade' : 'install'
+      const r = await apiFetch(`/api/crowdsec/hub/collections/${encodeURIComponent(name)}/${action}`, { method: 'POST' })
       if (r.ok) {
-        addToast(`${name} installed`, 'success')
+        addToast(upgrade ? `${name} updated` : `${name} installed`, 'success')
         await loadCollections()
         await loadScenarios()
       } else {
         const err = await r.json().catch(() => ({}))
-        addToast((err as { detail?: string }).detail ?? 'Install failed', 'error')
+        addToast((err as { detail?: string }).detail ?? (upgrade ? 'Update failed' : 'Install failed'), 'error')
       }
     } finally {
       setInstalling(null)
@@ -626,7 +628,7 @@ export function RulesPage() {
                             {!s.up_to_date && (
                               <button
                                 type="button"
-                                onClick={() => void handleInstallScenario(s.name)}
+                                onClick={() => void handleInstallScenario(s.name, true)}
                                 disabled={installing === s.name}
                                 className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50 dark:border-blue-500/30 dark:bg-blue-900/20 dark:text-blue-400"
                               >
@@ -723,7 +725,7 @@ export function RulesPage() {
                             {!c.up_to_date && (
                               <button
                                 type="button"
-                                onClick={() => void handleInstallCollection(c.name)}
+                                onClick={() => void handleInstallCollection(c.name, true)}
                                 disabled={installing === c.name}
                                 className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50 dark:border-blue-500/30 dark:bg-blue-900/20 dark:text-blue-400"
                               >

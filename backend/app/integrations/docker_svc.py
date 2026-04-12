@@ -158,8 +158,26 @@ def cscli_list_scenarios(container_name: str = "crowdsec") -> dict[str, Any]:
 
 
 def cscli_install_scenario(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
-    """Install a scenario. Only checks exit code — no JSON output expected."""
+    """Install a new scenario (not yet installed)."""
     return _cscli_cmd(container_name, ["scenarios", "install", name, "--force"])
+
+
+def cscli_upgrade_scenario(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    """Upgrade an already-installed scenario to its latest hub version.
+
+    Runs hub update first to refresh the index, then upgrades the specific item.
+    Falls back to install --force if upgrade reports it is not installed.
+    """
+    # Refresh hub index so cscli knows about newer versions
+    hub_res = _exec(container_name, ["cscli", "hub", "update"])
+    if not hub_res["ok"]:
+        log.warning("hub update failed before upgrading scenario %s: %s", name, hub_res.get("error"))
+
+    result = _cscli_cmd(container_name, ["scenarios", "upgrade", name])
+    if not result["ok"]:
+        # Some cscli versions require install --force to update
+        result = _cscli_cmd(container_name, ["scenarios", "install", name, "--force"])
+    return result
 
 
 def cscli_remove_scenario(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
@@ -172,8 +190,24 @@ def cscli_list_collections(container_name: str = "crowdsec") -> dict[str, Any]:
 
 
 def cscli_install_collection(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
-    """Install a collection. Only checks exit code — no JSON output expected."""
+    """Install a new collection (not yet installed)."""
     return _cscli_cmd(container_name, ["collections", "install", name, "--force"])
+
+
+def cscli_upgrade_collection(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    """Upgrade an already-installed collection to its latest hub version.
+
+    Runs hub update first to refresh the index, then upgrades the specific item.
+    Falls back to install --force if upgrade reports it is not installed.
+    """
+    hub_res = _exec(container_name, ["cscli", "hub", "update"])
+    if not hub_res["ok"]:
+        log.warning("hub update failed before upgrading collection %s: %s", name, hub_res.get("error"))
+
+    result = _cscli_cmd(container_name, ["collections", "upgrade", name])
+    if not result["ok"]:
+        result = _cscli_cmd(container_name, ["collections", "install", name, "--force"])
+    return result
 
 
 def cscli_remove_collection(name: str, container_name: str = "crowdsec") -> dict[str, Any]:

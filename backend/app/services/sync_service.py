@@ -361,7 +361,7 @@ def _build_log_index(db: Session) -> dict:
     from pathlib import Path as _Path
     from app.settings import get_settings
     from app.integrations.instance_settings import get_or_create_instance_settings
-    from app.integrations.traefik_log_reader import build_ip_host_index, get_cached_index
+    from app.integrations.traefik_log_reader import get_cached_index, get_cached_docker_index
 
     s = get_settings()
     _inst = get_or_create_instance_settings(db)
@@ -376,13 +376,13 @@ def _build_log_index(db: Session) -> dict:
         except Exception as exc:
             log.warning("Traefik log index build failed (file): %s", exc)
 
-    # Fallback: Docker exec
+    # Fallback: Docker exec — also cached to avoid OOM on repeated enrich calls
     try:
         docker_paths = [
             "/var/log/traefik/access.log",
             "/var/log/access.log",
         ]
-        index = build_ip_host_index(None, docker_container=container_name, docker_log_paths=docker_paths)
+        index = get_cached_docker_index(container_name, docker_paths)
         if index:
             return index
     except Exception as exc:

@@ -198,14 +198,19 @@ def _fix_enrichment_flags() -> None:
     get a fresh correlation attempt now that the log path may be configured.
     Previously this flag could be set to True even when the log file was simply
     not found, which prevented any future retry.
+    Uses ORM-level update to remain compatible with both SQLite and PostgreSQL.
     """
+    from sqlalchemy import update as _update
+    from app.models import StoredAlert as _SA
     try:
-        with engine.connect() as conn:
-            conn.exec_driver_sql(
-                "UPDATE stored_alerts SET log_enrichment_attempted = 0 "
-                "WHERE target_host IS NULL AND log_enrichment_attempted = 1"
+        with SessionLocal() as session:
+            session.execute(
+                _update(_SA)
+                .where(_SA.target_host.is_(None))
+                .where(_SA.log_enrichment_attempted == True)  # noqa: E712
+                .values(log_enrichment_attempted=False)
             )
-            conn.commit()
+            session.commit()
     except Exception as exc:
         log.warning("Could not reset enrichment flags: %s", exc)
 

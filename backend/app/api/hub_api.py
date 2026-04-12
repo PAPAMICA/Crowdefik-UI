@@ -154,6 +154,20 @@ def install_scenario(
     return {"ok": True, "name": name}
 
 
+@router.post("/scenarios/{name:path}/upgrade")
+def upgrade_scenario(
+    name: str,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    """Upgrade an already-installed scenario to its latest version (hub update + upgrade)."""
+    container = _container_name(db)
+    result = docker_svc.cscli_upgrade_scenario(name, container)
+    if not result["ok"]:
+        raise HTTPException(status_code=400, detail=result.get("error", "Upgrade failed"))
+    return {"ok": True, "name": name}
+
+
 @router.delete("/scenarios/{name:path}")
 def remove_scenario(
     name: str,
@@ -207,6 +221,20 @@ def install_collection(
     result = docker_svc.cscli_install_collection(name, container)
     if not result["ok"]:
         raise HTTPException(status_code=400, detail=result.get("error", "Install failed"))
+    return {"ok": True, "name": name}
+
+
+@router.post("/collections/{name:path}/upgrade")
+def upgrade_collection(
+    name: str,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(require_superuser)],
+) -> dict[str, Any]:
+    """Upgrade an already-installed collection to its latest version (hub update + upgrade)."""
+    container = _container_name(db)
+    result = docker_svc.cscli_upgrade_collection(name, container)
+    if not result["ok"]:
+        raise HTTPException(status_code=400, detail=result.get("error", "Upgrade failed"))
     return {"ok": True, "name": name}
 
 
