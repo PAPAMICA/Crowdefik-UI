@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, allowlist_api, audit_api, auth, cache_refresh, crowdsec_api, dashboard, ip_info, logs_api, profile_api, routers_api, services_api, settings_api, test_connections, traefik_api, ws
+from app.api import admin, allowlist_api, audit_api, auth, cache_refresh, crowdsec_api, dashboard, hub_api, ip_info, logs_api, profile_api, routers_api, services_api, settings_api, test_connections, traefik_api, ws
 from app.core.security import hash_password
 from app.db import SessionLocal, engine
 from app.models import Base, User
@@ -23,6 +23,7 @@ async def lifespan(_: FastAPI):
     _run_migrations()
     Base.metadata.create_all(bind=engine)
     _bootstrap_admin_if_needed()
+    _fix_enrichment_flags()
     # Background CrowdSec → DB sync
     task = asyncio.create_task(_sync_loop())
     yield
@@ -30,21 +31,31 @@ async def lifespan(_: FastAPI):
 
 
 async def _sync_loop() -> None:
-    # Short initial delay so the app is fully ready
-    await asyncio.sleep(5)
+    # Short initial delay so the app is fully ready; retry quickly if first sync fails
+    await asyncio.sleep(2)
+    first = True
     while True:
         try:
             await asyncio.to_thread(_do_sync)
+            first = False
         except Exception as exc:
             log.warning("Background sync failed: %s", exc)
+            if first:
+                # Retry sooner on startup failures (CrowdSec may still be booting)
+                await asyncio.sleep(10)
+                continue
         await asyncio.sleep(SYNC_INTERVAL_SECONDS)
 
 
 def _do_sync() -> None:
     db = SessionLocal()
     try:
+        from app.core import cache as cache_mod
         from app.services.sync_service import run_full_sync
-        run_full_sync(db)
+        result = run_full_sync(db)
+        # Invalidate dashboard caches so the next request gets fresh data
+        cache_mod.invalidate_prefix("dashboard:")
+        return result
     finally:
         db.close()
 
@@ -160,6 +171,24 @@ def _run_migrations() -> None:
             log.warning("Migration connection error for '%s': %s", alter_sql, conn_exc)
 
 
+def _fix_enrichment_flags() -> None:
+    """
+    Reset log_enrichment_attempted for alerts that have no target_host so they
+    get a fresh correlation attempt now that the log path may be configured.
+    Previously this flag could be set to True even when the log file was simply
+    not found, which prevented any future retry.
+    """
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql(
+                "UPDATE stored_alerts SET log_enrichment_attempted = 0 "
+                "WHERE target_host IS NULL AND log_enrichment_attempted = 1"
+            )
+            conn.commit()
+    except Exception as exc:
+        log.warning("Could not reset enrichment flags: %s", exc)
+
+
 def _bootstrap_admin_if_needed() -> None:
     settings = get_settings()
     if not settings.bootstrap_admin_username or not settings.bootstrap_admin_password:
@@ -211,6 +240,8 @@ def create_app() -> FastAPI:
     app.include_router(logs_api.router, prefix="/api")
     app.include_router(ip_info.router, prefix="/api")
     app.include_router(allowlist_api.router, prefix="/api")
+    app.include_router(hub_api.router, prefix="/api")
+    app.include_router(hub_api.policy_router, prefix="/api")
     app.include_router(ws.router)
 
     @app.get("/api/health")

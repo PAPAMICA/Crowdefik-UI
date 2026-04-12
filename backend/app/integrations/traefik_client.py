@@ -110,57 +110,89 @@ def fetch_services_sync(db: Session) -> list[dict[str, Any]]:
 
 
 def fetch_tls_domains(db: Session) -> list[dict[str, Any]]:
-    """Extract TLS domain info from routers and check cert expiry via SSL."""
-    import ssl
+    """Extract TLS domain info from routers and check cert expiry via SSL.
+
+    All SSL probes run concurrently (ThreadPoolExecutor) so the total wall
+    time is bounded by the slowest single host, not N×timeout.
+    The DB session is only used for the initial router fetch; it is not
+    accessed during the (potentially slow) SSL checks.
+    """
+    import re
     import socket
+    import ssl
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from datetime import datetime, timezone
 
+    # Fetch routers first (uses DB) — after this the DB session is no longer needed.
     routers = fetch_routers_sync(db)
-    domains: dict[str, dict[str, Any]] = {}
 
+    # Build the unique (domain → router_name) map from TLS routers
+    domain_router: dict[str, str] = {}
     for r in routers:
-        tls = r.get("tls")
-        if not tls:
+        if not r.get("tls"):
             continue
         rule = r.get("rule", "")
-        # Extract hosts from rule like Host(`foo.example.com`)
-        import re
-        hosts = re.findall(r'Host\(`([^`]+)`\)', rule)
-        for host in hosts:
-            if host in domains:
-                continue
-            entry: dict[str, Any] = {
-                "domain": host,
-                "router": r.get("name", ""),
-                "expiry": None,
-                "days_left": None,
-                "status": "unknown",
-            }
-            try:
-                ctx = ssl.create_default_context()
-                conn = ctx.wrap_socket(
-                    socket.create_connection((host, 443), timeout=5),
-                    server_hostname=host,
-                )
-                cert = conn.getpeercert()
-                conn.close()
-                if cert and "notAfter" in cert:
-                    from datetime import datetime, timezone
-                    expiry = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
-                    days_left = (expiry - datetime.now(timezone.utc)).days
-                    entry["expiry"] = expiry.isoformat()
-                    entry["days_left"] = days_left
-                    if days_left <= 7:
-                        entry["status"] = "critical"
-                    elif days_left <= 30:
-                        entry["status"] = "warning"
-                    else:
-                        entry["status"] = "ok"
-            except Exception as exc:
-                log.debug("TLS check failed for %s: %s", host, exc)
-                entry["status"] = "unreachable"
-            domains[host] = entry
+        for host in re.findall(r'Host\(`([^`]+)`\)', rule):
+            if host not in domain_router:
+                domain_router[host] = r.get("name", "")
 
-    return sorted(domains.values(), key=lambda x: (x.get("days_left") or 9999))
+    if not domain_router:
+        return []
+
+    # ── Probe a single host (runs in a thread pool worker) ────────────────────
+    def _probe(host: str) -> dict[str, Any]:
+        entry: dict[str, Any] = {
+            "domain": host,
+            "router": domain_router[host],
+            "expiry": None,
+            "days_left": None,
+            "status": "unknown",
+        }
+        try:
+            ctx = ssl.create_default_context()
+            # Use a short connect timeout (3 s) so unreachable hosts fail fast.
+            with ctx.wrap_socket(
+                socket.create_connection((host, 443), timeout=3),
+                server_hostname=host,
+            ) as conn:
+                cert = conn.getpeercert()
+            if cert and "notAfter" in cert:
+                expiry = datetime.strptime(
+                    cert["notAfter"], "%b %d %H:%M:%S %Y %Z"
+                ).replace(tzinfo=timezone.utc)
+                days_left = (expiry - datetime.now(timezone.utc)).days
+                entry["expiry"] = expiry.isoformat()
+                entry["days_left"] = days_left
+                entry["status"] = (
+                    "critical" if days_left <= 7 else
+                    "warning" if days_left <= 30 else
+                    "ok"
+                )
+        except Exception as exc:
+            log.debug("TLS check failed for %s: %s", host, exc)
+            entry["status"] = "unreachable"
+        return entry
+
+    # ── Run all probes in parallel (max 20 workers) ───────────────────────────
+    results: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=min(20, len(domain_router))) as pool:
+        futures = {pool.submit(_probe, host): host for host in domain_router}
+        for fut in as_completed(futures):
+            try:
+                entry = fut.result()
+                results[entry["domain"]] = entry
+            except Exception as exc:
+                host = futures[fut]
+                log.warning("Unexpected error probing %s: %s", host, exc)
+                results[host] = {
+                    "domain": host,
+                    "router": domain_router[host],
+                    "expiry": None,
+                    "days_left": None,
+                    "status": "unreachable",
+                }
+
+    return sorted(results.values(), key=lambda x: (x.get("days_left") or 9999))
 
 
 def test_connection(db: Session) -> dict[str, Any]:

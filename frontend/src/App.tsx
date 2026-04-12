@@ -24,6 +24,7 @@ const LogsAccessPage  = lazy(() => import('./pages/LogsAccessPage').then((m) => 
 const LogsTraefikPage = lazy(() => import('./pages/LogsTraefikPage').then((m) => ({ default: m.LogsTraefikPage })))
 const LogsCrowdSecPage = lazy(() => import('./pages/LogsCrowdSecPage').then((m) => ({ default: m.LogsCrowdSecPage })))
 const AllowlistPage    = lazy(() => import('./pages/AllowlistPage').then((m) => ({ default: m.AllowlistPage })))
+const RulesPage        = lazy(() => import('./pages/RulesPage').then((m) => ({ default: m.RulesPage })))
 
 function PageLoader() {
   return (
@@ -76,6 +77,7 @@ export default function App() {
                   <Route path="/logs/traefik" element={<LogsTraefikPage />} />
                   <Route path="/logs/crowdsec" element={<LogsCrowdSecPage />} />
                   <Route path="/crowdsec/allowlist" element={<AllowlistPage />} />
+                  <Route path="/crowdsec/rules" element={<RulesPage />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

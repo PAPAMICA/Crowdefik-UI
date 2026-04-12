@@ -1,5 +1,6 @@
 import {
   Activity,
+  BookOpen,
   Bot,
   ChevronLeft,
   ChevronRight,
@@ -8,12 +9,15 @@ import {
   GanttChartSquare,
   LayoutDashboard,
   LogOut,
+  Monitor,
+  Moon,
   Route,
   ScrollText,
   Settings,
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Sun,
   User,
   Users,
 } from 'lucide-react'
@@ -76,6 +80,7 @@ const INFRA_NAV = [
   { to: '/traefik', icon: Route, label: 'Traefik', color: 'text-cyan-500' },
   { to: '/crowdsec', icon: Bot, label: 'CrowdSec', color: 'text-emerald-500' },
   { to: '/crowdsec/allowlist', icon: ShieldCheck, label: 'Allowlist', color: 'text-emerald-400' },
+  { to: '/crowdsec/rules', icon: BookOpen, label: 'Rules & Policies', color: 'text-violet-400' },
 ]
 
 const LOGS_NAV = [
@@ -188,19 +193,41 @@ export function Sidebar({ collapsed, onToggle }: Props) {
       {/* Bottom section */}
       <div className="border-t border-white/10 px-3 py-4 space-y-2">
         {/* Theme selector */}
-        {!collapsed && (
-          <div className="flex gap-1 rounded-xl bg-white/5 p-1">
-            {(['light', 'system', 'dark'] as const).map((m) => (
+        {collapsed ? (
+          /* Compact: single icon button cycling through modes */
+          <button
+            type="button"
+            onClick={() => setMode(mode === 'light' ? 'dark' : mode === 'dark' ? 'system' : 'light')}
+            title={`Theme: ${mode} — click to cycle`}
+            className="flex w-full items-center justify-center rounded-xl py-2 text-slate-400 hover:bg-white/5 hover:text-white transition"
+          >
+            {mode === 'light'
+              ? <Sun className="h-4 w-4 text-amber-400" />
+              : mode === 'dark'
+                ? <Moon className="h-4 w-4 text-indigo-400" />
+                : <Monitor className="h-4 w-4 text-slate-400" />}
+          </button>
+        ) : (
+          /* Expanded: segmented control with icons + labels */
+          <div className="flex gap-0.5 rounded-xl bg-white/5 p-1">
+            {([
+              { id: 'light',  Icon: Sun,     label: 'Light',  active: 'text-amber-300' },
+              { id: 'system', Icon: Monitor, label: 'Auto',   active: 'text-slate-200' },
+              { id: 'dark',   Icon: Moon,    label: 'Dark',   active: 'text-indigo-300' },
+            ] as const).map(({ id, Icon, label, active }) => (
               <button
-                key={m}
+                key={id}
                 type="button"
-                onClick={() => setMode(m)}
+                onClick={() => setMode(id)}
                 className={[
-                  'flex-1 rounded-lg py-1 text-[10px] font-medium capitalize transition',
-                  mode === m ? 'bg-white/15 text-white' : 'text-slate-400 hover:text-white',
+                  'flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-medium transition-all',
+                  mode === id
+                    ? `bg-white/10 shadow-sm ${active}`
+                    : 'text-slate-500 hover:text-slate-300',
                 ].join(' ')}
               >
-                {m}
+                <Icon className="h-3 w-3 shrink-0" />
+                {label}
               </button>
             ))}
           </div>

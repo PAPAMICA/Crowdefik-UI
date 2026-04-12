@@ -179,7 +179,17 @@ async function fetchIpInfo(ip: string): Promise<IpInfo | null> {
 }
 
 // ── IpBadge ───────────────────────────────────────────────────
-export function IpBadge({ ip }: { ip: string }) {
+export function IpBadge({
+  ip,
+  countryCode: initialCountryCode,
+  score: initialScore,
+}: {
+  ip: string
+  /** Pre-populated country code from API data (shown immediately, no hover required) */
+  countryCode?: string | null
+  /** Pre-populated abuse score from API data */
+  score?: number | null
+}) {
   const [open, setOpen] = useState(false)
   const [info, setInfo] = useState<IpInfo | null>(() => cache.get(ip) ?? null)
   const [protected_, setProtected] = useState<boolean>(() => allowlistCache.get(ip) ?? false)
@@ -200,8 +210,9 @@ export function IpBadge({ ip }: { ip: string }) {
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
   }
 
-  const cc = info?.abuse?.countryCode || info?.geo?.countryCode || ''
-  const score = info?.abuse?.abuseConfidenceScore ?? null
+  // Use fetched data when available, fall back to pre-populated props
+  const cc = info?.abuse?.countryCode || info?.geo?.countryCode || initialCountryCode || ''
+  const score = info?.abuse?.abuseConfidenceScore ?? initialScore ?? null
 
   return (
     <>

@@ -265,6 +265,9 @@ def trigger_sync(
     db: Annotated[Session, Depends(get_db)],
     _: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, Any]:
-    """Manually trigger a CrowdSec → DB sync."""
+    """Manually trigger a CrowdSec → DB sync and invalidate dashboard caches."""
     from app.services.sync_service import run_full_sync
-    return run_full_sync(db)
+    result = run_full_sync(db)
+    cache_mod.invalidate_prefix("dashboard:")
+    cache_mod.invalidate_prefix("traefik:")
+    return result

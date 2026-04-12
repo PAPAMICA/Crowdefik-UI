@@ -1,6 +1,6 @@
 import {
   Activity, AlertTriangle, Box, CheckCircle, ChevronRight,
-  Container, Eye, FileText, Loader2, Lock, Save, Settings, Shield,
+  Container, Eye, FileText, Loader2, Lock, RefreshCw, Save, Settings, Shield,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Navigate } from 'react-router-dom'
@@ -141,11 +141,14 @@ export function SettingsPage() {
   })
   const [tab, setTab] = useState<TabId>('traefik')
   const [saving, setSaving] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const [tests, setTests] = useState<Record<string, TestResult | 'pending' | null>>({
     traefik: null, crowdsec: null, 'crowdsec-watcher': null, docker: null, abuseipdb: null,
   })
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const syncMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     void (async () => {
@@ -200,10 +203,12 @@ export function SettingsPage() {
       const data = (await res.json()) as SettingsOut
       setS(data)
       setForm((prev) => ({ ...prev, traefik_basic_password: '', crowdsec_api_key: '', crowdsec_machine_password: '', abuseipdb_api_key: '' }))
-      setMsg({ text: 'Settings saved successfully', ok: true })
+      setMsg({ text: 'Settings saved — syncing data…', ok: true })
       setTests({ traefik: null, crowdsec: null, 'crowdsec-watcher': null, docker: null, abuseipdb: null })
       if (msgTimer.current) clearTimeout(msgTimer.current)
       msgTimer.current = setTimeout(() => setMsg(null), 4000)
+      // Automatically trigger a sync so the dashboard reflects the new settings immediately
+      void forceSync()
     } finally {
       setSaving(false)
     }
@@ -214,6 +219,32 @@ export function SettingsPage() {
     const res = await apiFetch(`/api/test/${name}`)
     const data: TestResult = res.ok ? await res.json() as TestResult : { ok: false, error: `HTTP ${res.status}` }
     setTests((t) => ({ ...t, [name]: data }))
+    // After a successful connection test, the backend triggers a sync automatically.
+    // Show a brief message to let the user know.
+    if (data.ok) {
+      setSyncMsg({ text: 'Sync triggered in background — data will refresh shortly', ok: true })
+      if (syncMsgTimer.current) clearTimeout(syncMsgTimer.current)
+      syncMsgTimer.current = setTimeout(() => setSyncMsg(null), 5000)
+    }
+  }
+
+  async function forceSync() {
+    setSyncing(true)
+    setSyncMsg(null)
+    try {
+      const res = await apiFetch('/api/dashboard/sync', { method: 'POST' })
+      if (res.ok) {
+        setSyncMsg({ text: 'Sync completed — data is now up to date', ok: true })
+      } else {
+        setSyncMsg({ text: 'Sync failed — check CrowdSec connectivity', ok: false })
+      }
+    } catch {
+      setSyncMsg({ text: 'Sync failed — server unreachable', ok: false })
+    } finally {
+      setSyncing(false)
+      if (syncMsgTimer.current) clearTimeout(syncMsgTimer.current)
+      syncMsgTimer.current = setTimeout(() => setSyncMsg(null), 6000)
+    }
   }
 
   const tabDef = TABS.find((t) => t.id === tab)!
@@ -221,13 +252,34 @@ export function SettingsPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="rounded-2xl bg-violet-500/10 p-2.5">
-          <Settings className="h-5 w-5 text-violet-500" />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="rounded-2xl bg-violet-500/10 p-2.5">
+            <Settings className="h-5 w-5 text-violet-500" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Settings</h1>
+            <p className="text-sm text-slate-500">Integration URLs, API keys and container names — encrypted at rest</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Settings</h1>
-          <p className="text-sm text-slate-500">Integration URLs, API keys and container names — encrypted at rest</p>
+        <div className="flex items-center gap-3">
+          {syncMsg && (
+            <span className={`text-xs font-medium ${syncMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+              {syncMsg.ok
+                ? <CheckCircle className="mr-1 inline h-3.5 w-3.5" />
+                : <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />}
+              {syncMsg.text}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void forceSync()}
+            disabled={syncing}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Syncing…' : 'Sync now'}
+          </button>
         </div>
       </div>
 

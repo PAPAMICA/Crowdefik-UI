@@ -1,5 +1,6 @@
 """Traefik infrastructure API — overview, entrypoints, middlewares, TLS certs."""
 import asyncio
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
@@ -10,6 +11,8 @@ from app.core import cache as cache_mod
 from app.db import get_db
 from app.integrations import traefik_client
 from app.models import User
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/traefik", tags=["traefik"])
 
@@ -70,10 +73,23 @@ def traefik_overview(
 def traefik_certs(
     db: Annotated[Session, Depends(get_db)],
     _user: Annotated[User, Depends(get_current_user)],
-) -> list[dict[str, Any]]:
-    """Return TLS certificate info for all HTTPS routers."""
-    return cache_mod.get_cached(
-        "traefik:certs",
-        lambda: traefik_client.fetch_tls_domains(db),
-        ttl_seconds=3600,  # Cache for 1 hour since SSL checks are slow
-    )
+    force: bool = False,
+) -> dict[str, Any]:
+    """Return TLS certificate info for all HTTPS routers.
+
+    Results are cached for 1 hour (SSL probes are network-bound).
+    Pass ?force=true to bypass the cache and re-probe immediately.
+    """
+    if force:
+        cache_mod.invalidate_prefix("traefik:certs")
+
+    try:
+        certs = cache_mod.get_cached(
+            "traefik:certs",
+            lambda: traefik_client.fetch_tls_domains(db),
+            ttl_seconds=3600,
+        )
+        return {"ok": True, "certs": certs}
+    except Exception as exc:
+        log.warning("TLS cert check failed: %s", exc)
+        return {"ok": False, "error": str(exc)[:300], "certs": []}

@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { apiFetch } from '../api'
+import { useToast } from '../components/Toast'
 
 type Entrypoint = { name: string; address: string; tls: boolean; protocol: string }
 type Middleware = { name: string; type: string | null; provider: string | null; status: string | null }
@@ -64,10 +65,12 @@ function certIcon(status: Cert['status']) {
 }
 
 export function TraefikPage() {
+  const { addToast } = useToast()
   const [overview, setOverview] = useState<Overview | null>(null)
   const [certs, setCerts] = useState<Cert[]>([])
   const [loadingCerts, setLoadingCerts] = useState(false)
   const [certsLoaded, setCertsLoaded] = useState(false)
+  const [certsError, setCertsError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
   async function loadOverview() {
@@ -80,11 +83,26 @@ export function TraefikPage() {
     }
   }
 
-  async function loadCerts() {
+  async function loadCerts(force = false) {
     setLoadingCerts(true)
+    setCertsError(null)
     try {
-      const res = await apiFetch('/api/traefik/certs')
-      if (res.ok) setCerts((await res.json()) as Cert[])
+      const url = force ? '/api/traefik/certs?force=true' : '/api/traefik/certs'
+      const res = await apiFetch(url)
+      if (!res.ok) {
+        const msg = `HTTP ${res.status} — ${res.statusText}`
+        setCertsError(msg)
+        addToast(`Certificate check failed: ${msg}`, 'error')
+        setCertsLoaded(true)
+        return
+      }
+      const data = await res.json() as { ok: boolean; certs: Cert[]; error?: string }
+      if (!data.ok) {
+        setCertsError(data.error ?? 'Unknown error')
+        addToast(`Certificate check failed: ${data.error ?? 'Unknown error'}`, 'error')
+      } else {
+        setCerts(data.certs)
+      }
       setCertsLoaded(true)
     } finally {
       setLoadingCerts(false)
@@ -202,12 +220,16 @@ export function TraefikPage() {
           {!certsLoaded ? (
             <button type="button" onClick={() => void loadCerts()} disabled={loadingCerts}
               className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-60">
-              {loadingCerts ? <><RefreshCw className="h-3 w-3 animate-spin" /> Checking…</> : 'Check certificates'}
+              {loadingCerts
+                ? <><RefreshCw className="h-3 w-3 animate-spin" /> Checking…</>
+                : <><Globe className="h-3 w-3" /> Check certificates</>}
             </button>
           ) : (
-            <button type="button" onClick={() => void loadCerts()} disabled={loadingCerts}
+            <button type="button" onClick={() => void loadCerts(true)} disabled={loadingCerts}
+              title="Force re-check (bypasses 1h cache)"
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300">
-              <RefreshCw className={`h-3 w-3 ${loadingCerts ? 'animate-spin' : ''}`} /> Refresh
+              <RefreshCw className={`h-3 w-3 ${loadingCerts ? 'animate-spin' : ''}`} />
+              {loadingCerts ? 'Checking…' : 'Re-check'}
             </button>
           )}
         </div>
@@ -215,8 +237,20 @@ export function TraefikPage() {
         {!certsLoaded ? (
           <p className="px-5 py-10 text-center text-sm text-slate-400">
             Click "Check certificates" to probe TLS expiry for all HTTPS routers.<br />
-            <span className="text-xs text-slate-300 dark:text-slate-500">This may take a few seconds.</span>
+            <span className="text-xs text-slate-300 dark:text-slate-500">All domains are checked in parallel — usually takes 3–5 seconds.</span>
           </p>
+        ) : certsError ? (
+          <div className="flex items-start gap-3 px-5 py-8">
+            <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+            <div>
+              <p className="text-sm font-medium text-red-700 dark:text-red-400">Certificate check failed</p>
+              <p className="mt-1 font-mono text-xs text-slate-500 dark:text-slate-400">{certsError}</p>
+              <button type="button" onClick={() => void loadCerts(true)} disabled={loadingCerts}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300">
+                <RefreshCw className="h-3 w-3" /> Retry
+              </button>
+            </div>
+          </div>
         ) : certs.length === 0 ? (
           <p className="px-5 py-10 text-center text-sm text-slate-400">No HTTPS routers found or no certificates detected.</p>
         ) : (

@@ -94,6 +94,54 @@ def cscli_metrics(container_name: str = "crowdsec") -> dict[str, Any]:
     return _cscli(container_name, ["metrics"])
 
 
+# ── Hub / Scenarios / Collections ─────────────────────────────────────────────
+
+def cscli_hub_update(container_name: str = "crowdsec") -> dict[str, Any]:
+    """Update the hub index (cscli hub update)."""
+    try:
+        c = _client()
+    except DockerException as exc:
+        return {"ok": False, "error": f"Docker connect failed: {exc}"}
+    try:
+        container = c.containers.get(container_name)
+    except NotFound:
+        return {"ok": False, "error": f"Container '{container_name}' not found"}
+    except DockerException as exc:
+        return {"ok": False, "error": str(exc)}
+    try:
+        result = container.exec_run(["cscli", "hub", "update"])
+        raw = result.output.decode("utf-8", errors="replace").strip()
+        if result.exit_code != 0:
+            return {"ok": False, "error": raw or f"exit code {result.exit_code}"}
+        return {"ok": True, "output": raw}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def cscli_list_scenarios(container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["scenarios", "list"])
+
+
+def cscli_install_scenario(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["scenarios", "install", name, "--force"])
+
+
+def cscli_remove_scenario(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["scenarios", "remove", name, "--purge"])
+
+
+def cscli_list_collections(container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["collections", "list"])
+
+
+def cscli_install_collection(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["collections", "install", name, "--force"])
+
+
+def cscli_remove_collection(name: str, container_name: str = "crowdsec") -> dict[str, Any]:
+    return _cscli(container_name, ["collections", "remove", name, "--purge"])
+
+
 def test_connection() -> dict[str, Any]:
     """Return Docker daemon version or error."""
     try:

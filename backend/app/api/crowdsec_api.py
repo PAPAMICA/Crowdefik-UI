@@ -464,7 +464,7 @@ def enrich_alert(
 ) -> dict[str, str | None]:
     """Force target_host discovery for a single alert via Traefik log correlation."""
     from app.models import StoredAlert
-    from app.services.sync_service import _backfill_from_traefik_log, _extract_target_host
+    from app.services.sync_service import _extract_target_host
     from app.settings import get_settings
 
     row = db.query(StoredAlert).filter(StoredAlert.id == alert_id).first()
@@ -483,12 +483,19 @@ def enrich_alert(
         db.commit()
         return {"id": str(alert_id), "target_host": host}
 
-    # 2. Traefik log correlation — only possible when the log file is mounted
+    # 2. Traefik log correlation — resolve the access log path from DB first,
+    #    then fall back to the env-var setting (same priority as logs_api).
+    from app.integrations.instance_settings import get_or_create_instance_settings
+    from pathlib import Path as _Path
+
     s = get_settings()
-    if not s.traefik_log_path or not s.traefik_log_path.exists():
-        # Log not available: mark as attempted so the button doesn't keep spinning
-        row.log_enrichment_attempted = True
-        db.commit()
+    _inst = get_or_create_instance_settings(db)
+    _db_log = getattr(_inst, "log_path_access", None)
+    log_path: _Path | None = _Path(_db_log) if _db_log else s.traefik_log_path
+
+    if not log_path or not log_path.exists():
+        # Log not available — do NOT mark as attempted so the button stays visible
+        # (the user might mount the log file or configure its path later).
         return {"id": str(alert_id), "target_host": None}
 
     # 3. Use the cached index (built at most once every 60 s) to avoid
@@ -496,7 +503,7 @@ def enrich_alert(
     from app.integrations.traefik_log_reader import get_cached_index, find_host_for_alert
     from datetime import datetime as _dt
 
-    index = get_cached_index(s.traefik_log_path)
+    index = get_cached_index(log_path)
 
     target_uri: str | None = None
     try:
@@ -511,7 +518,7 @@ def enrich_alert(
     host = find_host_for_alert(index, row.source_ip or "", alert_time, target_uri)
 
     row.target_host = host
-    row.log_enrichment_attempted = True
+    row.log_enrichment_attempted = True  # found or not — don't retry via background sync
     db.commit()
 
     return {"id": str(alert_id), "target_host": host}

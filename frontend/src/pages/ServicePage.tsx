@@ -553,7 +553,7 @@ export function ServicePage() {
               <div key={ip.ip} className="flex items-center gap-3 px-5 py-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <IpBadge ip={ip.ip} />
+                    <IpBadge ip={ip.ip} countryCode={ip.country_code} />
                     {ip.country && (
                       <span className="text-xs text-slate-400">{ip.city ? `${ip.city}, ` : ''}{ip.country}</span>
                     )}

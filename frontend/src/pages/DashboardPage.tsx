@@ -274,7 +274,7 @@ export function DashboardPage() {
                   <div key={item.ip} className="flex items-center gap-2">
                     <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
                     <span className="flex-shrink-0 w-4 text-center text-[10px] font-bold text-slate-400">{item.count}</span>
-                    <IpBadge ip={item.ip} />
+                    <IpBadge ip={item.ip} countryCode={item.country_code} />
                   </div>
                 ))}
               </div>

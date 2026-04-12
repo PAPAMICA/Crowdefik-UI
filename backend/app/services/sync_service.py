@@ -283,13 +283,17 @@ def _backfill_from_traefik_log(db: Session, rows: list[StoredAlert]) -> int:
     access.log.  Always marks rows as attempted so this is called at most once
     per alert, regardless of whether a match is found.
 
-    Requires CROWDEFIK_TRAEFIK_LOG_PATH to be set and the log file to be
-    accessible inside the container (read-only volume mount).
+    Path resolution: DB setting (log_path_access) > env-var (CROWDEFIK_TRAEFIK_LOG_PATH).
     """
+    from pathlib import Path as _Path
     from app.settings import get_settings
+    from app.integrations.instance_settings import get_or_create_instance_settings
     from app.integrations.traefik_log_reader import LOOKBACK_HOURS
 
-    log_path = get_settings().traefik_log_path
+    s = get_settings()
+    _inst = get_or_create_instance_settings(db)
+    _db_log = getattr(_inst, "log_path_access", None)
+    log_path: _Path | None = _Path(_db_log) if _db_log else s.traefik_log_path
 
     # Restrict to alerts recent enough to potentially still be in the log.
     cutoff = datetime.utcnow() - timedelta(hours=LOOKBACK_HOURS)
