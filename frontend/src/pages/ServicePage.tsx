@@ -602,7 +602,7 @@ export function ServicePage() {
                 axisLine={false} tickLine={false} width={110} />
               <Tooltip
                 contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
-                formatter={(v: number) => [v, 'Alerts']} />
+                formatter={(v: unknown) => [v, 'Alerts']} />
               <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={20}>
                 {overview!.top_ips.map((_, idx) => (
                   <Cell key={idx} fill={`hsl(${(idx * 37) % 360}, 70%, 55%)`} />
