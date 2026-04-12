@@ -64,6 +64,11 @@ class InstanceSettings(Base):
 
 class StoredAlert(Base):
     __tablename__ = "stored_alerts"
+    __table_args__ = (
+        # Composite indexes for the most common filtered queries
+        Index("ix_alert_host_synced", "target_host", "synced_at"),
+        Index("ix_alert_ip_start",    "source_ip",   "start_at"),
+    )
     # Use CrowdSec numeric alert id as PK for idempotent upsert
     id = mapped_column(Integer, primary_key=True)
     scenario = mapped_column(String(512), nullable=False, default="")
@@ -85,6 +90,9 @@ class StoredAlert(Base):
 
 class StoredDecision(Base):
     __tablename__ = "stored_decisions"
+    __table_args__ = (
+        Index("ix_decision_ip_until", "ip_value", "until"),
+    )
     id = mapped_column(Integer, primary_key=True)
     ip_value = mapped_column(String(256), index=True, nullable=False)
     decision_type = mapped_column(String(64), nullable=True)

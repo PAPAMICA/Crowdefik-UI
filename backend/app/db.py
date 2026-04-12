@@ -1,6 +1,7 @@
 from collections.abc import Generator
+from typing import Any
 
-from sqlalchemy import event, text
+from sqlalchemy import event, func
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
@@ -35,7 +36,17 @@ if settings.database_url.startswith("sqlite"):
         cur.execute("PRAGMA busy_timeout=5000")
         cur.close()
 else:
-    engine = create_engine(settings.database_url)
+    # PostgreSQL (or any other SQL server): use a proper connection pool.
+    # pool_pre_ping verifies connections before use (handles server-side timeouts).
+    # pool_recycle discards connections older than 30 min to avoid stale handles.
+    engine = create_engine(
+        settings.database_url,
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+        connect_args={"connect_timeout": 10},
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -46,3 +57,32 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def slot_fmt_sql(fmt: str, col: Any) -> Any:
+    """Database-agnostic date-format expression.
+
+    Translates a SQLite ``strftime``-style format string into the appropriate
+    SQL function for the current database backend:
+
+    - **SQLite** → ``strftime(fmt, col)``
+    - **PostgreSQL** → ``to_char(col, pg_fmt)``  (format codes are converted)
+
+    Only the subset of format codes used in this application is supported:
+    ``%Y %m %d %H %M %S``.
+    """
+    url = settings.database_url
+    if url.startswith("sqlite"):
+        return func.strftime(fmt, col)
+
+    # Convert SQLite → PostgreSQL to_char format codes
+    pg_fmt = (
+        fmt
+        .replace("%Y", "YYYY")
+        .replace("%m", "MM")
+        .replace("%d", "DD")
+        .replace("%H", "HH24")
+        .replace("%M", "MI")
+        .replace("%S", "SS")
+    )
+    return func.to_char(col, pg_fmt)

@@ -1,8 +1,9 @@
-import { ClipboardList, Filter, RefreshCw, Search } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { ClipboardList, Download, Filter, RefreshCw, Search } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
+import { useToast } from '../components/Toast'
 
 type AuditEntry = {
   id: number
@@ -11,6 +12,14 @@ type AuditEntry = {
   target: string | null
   detail: string | null
   created_at: string
+}
+
+type AuditResponse = {
+  total: number
+  page: number
+  pages: number
+  limit: number
+  rows: AuditEntry[]
 }
 
 const ACTION_COLORS: Record<string, string> = {
@@ -22,6 +31,12 @@ const ACTION_COLORS: Record<string, string> = {
   crowdsec_bulk_reset: 'bg-slate-500/10 text-slate-700 dark:text-slate-400 border-slate-500/20',
   ban: 'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20',
   unban: 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20',
+  login_success: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
+  login_failed: 'bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20',
+  password_changed: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20',
+  user_created: 'bg-violet-500/10 text-violet-700 dark:text-violet-400 border-violet-500/20',
+  user_deleted: 'bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20',
+  settings_updated: 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20',
 }
 
 function actionClass(action: string): string {
@@ -30,12 +45,11 @@ function actionClass(action: string): string {
 
 const PAGE_SIZE = 50
 
-function Pagination({ page, total, pageSize, onChange }: { page: number; total: number; pageSize: number; onChange: (p: number) => void }) {
-  const pages = Math.ceil(total / pageSize)
+function Pagination({ page, pages, onChange }: { page: number; pages: number; onChange: (p: number) => void }) {
   if (pages <= 1) return null
   return (
     <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 dark:border-slate-700/50">
-      <span className="text-xs text-slate-500">{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total}</span>
+      <span className="text-xs text-slate-500">Page {page} of {pages}</span>
       <div className="flex gap-1">
         <button type="button" disabled={page <= 1} onClick={() => onChange(page - 1)}
           className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800">‹</button>
@@ -55,53 +69,97 @@ function Pagination({ page, total, pageSize, onChange }: { page: number; total: 
   )
 }
 
+function exportCSV(rows: AuditEntry[]) {
+  const headers = ['ID', 'Date', 'User', 'Action', 'Target', 'Detail']
+  const lines = rows.map((r) => [
+    r.id,
+    r.created_at,
+    r.username,
+    r.action,
+    r.target ?? '',
+    r.detail ?? '',
+  ])
+  const csv = [headers, ...lines].map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `audit-${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export function AuditPage() {
   const { me, loading } = useAuth()
-  const [rows, setRows] = useState<AuditEntry[]>([])
+  const { addToast } = useToast()
+  const [data, setData] = useState<AuditResponse | null>(null)
   const [search, setSearch] = useState('')
   const [actionFilter, setActionFilter] = useState('all')
   const [page, setPage] = useState(1)
+  const [debouncedSearch, setDebouncedSearch] = useState('')
 
-  async function loadData() {
-    const res = await apiFetch('/api/admin/audit?limit=500')
-    if (res.ok) setRows((await res.json()) as AuditEntry[])
-  }
+  // Debounce search input
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => clearTimeout(t)
+  }, [search])
 
-  useEffect(() => { void loadData() }, [])
+  const loadData = useCallback(async (p: number = page) => {
+    const params = new URLSearchParams({ page: String(p), limit: String(PAGE_SIZE) })
+    if (actionFilter !== 'all') params.set('action', actionFilter)
+    if (debouncedSearch) params.set('search', debouncedSearch)
+    const res = await apiFetch(`/api/admin/audit?${params}`)
+    if (!res.ok) { addToast('Failed to load audit log', 'error'); return }
+    setData((await res.json()) as AuditResponse)
+  }, [page, actionFilter, debouncedSearch, addToast])
+
+  useEffect(() => {
+    setPage(1)
+  }, [actionFilter, debouncedSearch])
+
+  useEffect(() => {
+    void loadData(page)
+  }, [page, actionFilter, debouncedSearch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!loading && (!me || !me.is_superuser)) return <Navigate to="/" replace />
 
+  const rows = data?.rows ?? []
+
+  // Collect unique actions seen across all fetched rows for the filter dropdown
   const actions = useMemo(() => [...new Set(rows.map((r) => r.action))].sort(), [rows])
 
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase()
-    return rows.filter((r) => {
-      if (actionFilter !== 'all' && r.action !== actionFilter) return false
-      if (!q) return true
-      return (
-        r.username.toLowerCase().includes(q) ||
-        r.action.toLowerCase().includes(q) ||
-        (r.target ?? '').toLowerCase().includes(q) ||
-        (r.detail ?? '').toLowerCase().includes(q)
-      )
-    })
-  }, [rows, search, actionFilter])
-
-  useEffect(() => setPage(1), [search, actionFilter])
-  const paged = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page])
+  async function handleExportAll() {
+    const params = new URLSearchParams({ page: '1', limit: '5000' })
+    if (actionFilter !== 'all') params.set('action', actionFilter)
+    if (debouncedSearch) params.set('search', debouncedSearch)
+    const res = await apiFetch(`/api/admin/audit?${params}`)
+    if (!res.ok) { addToast('Export failed', 'error'); return }
+    const d = (await res.json()) as AuditResponse
+    exportCSV(d.rows)
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Audit Log</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{filtered.length} of {rows.length} events</p>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            {data ? `${data.total} total events` : 'Loading…'}
+          </p>
         </div>
-        <button
-          type="button" onClick={() => void loadData()}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
-          <RefreshCw className="h-4 w-4" /> Refresh
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={handleExportAll}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+            <Download className="h-4 w-4" /> Export CSV
+          </button>
+          <button
+            type="button" onClick={() => void loadData(page)}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -136,7 +194,7 @@ export function AuditPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-              {paged.map((r) => (
+              {rows.map((r) => (
                 <tr key={r.id} className="hover:bg-slate-50/50 dark:hover:bg-white/5">
                   <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
                     {new Date(r.created_at).toLocaleString()}
@@ -154,17 +212,17 @@ export function AuditPage() {
                   <td className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">{r.detail ?? '—'}</td>
                 </tr>
               ))}
-              {!paged.length && (
+              {!rows.length && (
                 <tr>
                   <td colSpan={5} className="px-4 py-12 text-center text-sm text-slate-400">
-                    {rows.length ? 'No entries match filters' : 'No audit events yet'}
+                    {data ? 'No entries match filters' : 'Loading…'}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        <Pagination page={page} total={filtered.length} pageSize={PAGE_SIZE} onChange={setPage} />
+        <Pagination page={page} pages={data?.pages ?? 1} onChange={setPage} />
       </div>
     </div>
   )

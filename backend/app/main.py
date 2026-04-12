@@ -4,8 +4,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
-from app.api import admin, allowlist_api, audit_api, auth, cache_refresh, crowdsec_api, dashboard, hub_api, ip_info, logs_api, profile_api, routers_api, services_api, settings_api, test_connections, traefik_api, ws
+from app.api import admin, allowlist_api, audit_api, auth, cache_refresh, crowdsec_api, dashboard, health_api, hub_api, ip_info, logs_api, profile_api, routers_api, services_api, settings_api, test_connections, traefik_api, ws
+from app.core.rate_limit import limiter
 from app.core.security import hash_password
 from app.db import SessionLocal, engine
 from app.models import Base, User
@@ -144,6 +147,15 @@ _MIGRATIONS: list[tuple[str, str]] = [
 ]
 
 
+# Idempotent SQL statements that are always safe to run (CREATE INDEX IF NOT EXISTS, etc.)
+# These are executed unconditionally — they must use IF NOT EXISTS or equivalent guards.
+_IDEMPOTENT_SQL: list[str] = [
+    "CREATE INDEX IF NOT EXISTS ix_alert_host_synced ON stored_alerts (target_host, synced_at)",
+    "CREATE INDEX IF NOT EXISTS ix_alert_ip_start    ON stored_alerts (source_ip, start_at)",
+    "CREATE INDEX IF NOT EXISTS ix_decision_ip_until ON stored_decisions (ip_value, until)",
+]
+
+
 def _run_migrations() -> None:
     """
     Apply each migration independently so a failure on one never blocks the others.
@@ -169,6 +181,15 @@ def _run_migrations() -> None:
                         log.warning("Migration ALTER failed (will retry on next start): %s — %s", alter_sql, alter_exc)
         except Exception as conn_exc:
             log.warning("Migration connection error for '%s': %s", alter_sql, conn_exc)
+
+    # Always run idempotent DDL (CREATE INDEX IF NOT EXISTS, etc.)
+    for sql in _IDEMPOTENT_SQL:
+        try:
+            with engine.connect() as conn:
+                conn.exec_driver_sql(sql)
+                conn.commit()
+        except Exception as exc:
+            log.warning("Idempotent migration failed (non-blocking): %s — %s", sql, exc)
 
 
 def _fix_enrichment_flags() -> None:
@@ -211,16 +232,37 @@ def _bootstrap_admin_if_needed() -> None:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title=settings.app_name, lifespan=lifespan)
+
+    # Configure structured JSON logging
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format='{"time":"%(asctime)s","level":"%(levelname)s","name":"%(name)s","msg":"%(message)s"}',
+    )
+
+    app = FastAPI(
+        title=settings.app_name,
+        lifespan=lifespan,
+        # Disable interactive docs in production (debug=false)
+        docs_url="/docs" if settings.debug else None,
+        redoc_url="/redoc" if settings.debug else None,
+    )
+
+    # Rate limiter state
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
     origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     if not origins:
         origins = ["*"]
 
+    # allow_credentials=True is incompatible with wildcard origins — browsers reject it.
+    # Only enable credentials when explicit origins are configured.
+    allow_credentials = settings.cors_allow_credentials and origins != ["*"]
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=True,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -242,6 +284,7 @@ def create_app() -> FastAPI:
     app.include_router(allowlist_api.router, prefix="/api")
     app.include_router(hub_api.router, prefix="/api")
     app.include_router(hub_api.policy_router, prefix="/api")
+    app.include_router(health_api.router, prefix="/api")
     app.include_router(ws.router)
 
     @app.get("/api/health")

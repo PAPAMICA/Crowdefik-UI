@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:////data/crowdefik.db"
     jwt_secret: str = "change-me-in-production-use-long-random-string"
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60 * 24
+    access_token_expire_minutes: int = 60 * 2  # 2 hours default
     app_secret: str = "change-me-32-chars-minimum!!"
 
     traefik_custom_dir: Path = Path("/traefik-custom")
@@ -32,10 +32,24 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = 60 * 60 * 2
     crowdsec_cache_ttl_seconds: int = 60
 
+    # Optional Redis URL for distributed / persistent caching.
+    # When set, the cache backend switches to Redis; otherwise the default
+    # in-memory dict is used (suitable for single-instance deployments).
+    # Example: redis://crowdefik-redis:6379/0
+    redis_url: str | None = None
+
     bootstrap_admin_username: str | None = None
     bootstrap_admin_password: str | None = None
 
     cors_origins: str = "*"
+    # When cors_origins is a specific list (not *), credentials can be allowed.
+    cors_allow_credentials: bool = False
+
+    # Set to true to enable /docs and /redoc Swagger UI (disable in production).
+    debug: bool = False
+
+    # Structured log level: DEBUG, INFO, WARNING, ERROR
+    log_level: str = "INFO"
 
 
 @lru_cache

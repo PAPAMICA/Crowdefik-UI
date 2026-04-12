@@ -76,6 +76,7 @@ def compute_dashboard_summary(db: Session, user: User) -> dict[str, Any]:
             "count": r.cnt,
             "country_code": geo_map[r.source_ip].country_code if r.source_ip in geo_map else None,
             "country": geo_map[r.source_ip].country if r.source_ip in geo_map else None,
+            "abuse_score": geo_map[r.source_ip].abuse_score if r.source_ip in geo_map else None,
         }
         for r in top_ip_rows
     ]
@@ -143,18 +144,32 @@ def timeline(
         # SQLite strftime format for grouping — includes date so hours don't collide across days
         slot_fmt = '%Y-%m-%d %H:00' if hourly else '%Y-%m-%d'
 
+        from app.db import slot_fmt_sql
+
         a_q = (
-            db.query(func.strftime(slot_fmt, StoredAlert.synced_at).label('slot'),
+            db.query(slot_fmt_sql(slot_fmt, StoredAlert.synced_at).label('slot'),
                      func.count(StoredAlert.id).label('cnt'))
             .filter(StoredAlert.synced_at >= cutoff)
         )
         d_q = (
-            db.query(func.strftime(slot_fmt, StoredDecision.synced_at).label('slot'),
+            db.query(slot_fmt_sql(slot_fmt, StoredDecision.synced_at).label('slot'),
                      func.count(StoredDecision.id).label('cnt'))
             .filter(StoredDecision.synced_at >= cutoff)
         )
         if hosts:
             a_q = a_q.filter(StoredAlert.target_host.in_(hosts))
+            # Filter decisions to only those from IPs that attacked visible services,
+            # so non-superusers don't see global blocked-IP counts.
+            blocked_ips_subq = (
+                db.query(StoredAlert.source_ip)
+                .filter(
+                    StoredAlert.target_host.in_(hosts),
+                    StoredAlert.source_ip.isnot(None),
+                )
+                .distinct()
+                .subquery()
+            )
+            d_q = d_q.filter(StoredDecision.ip_value.in_(blocked_ips_subq))
 
         alert_map: dict[str, int] = {r.slot: r.cnt for r in a_q.group_by('slot').all()}
         blocked_map: dict[str, int] = {r.slot: r.cnt for r in d_q.group_by('slot').all()}

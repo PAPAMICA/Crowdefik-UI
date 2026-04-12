@@ -289,7 +289,7 @@ export function IpPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" vertical={false} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}
                 tickFormatter={(v: string) => v.slice(5)} interval="preserveStartEnd" />
-              <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={45} tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : String(v)} />
               <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
                 labelStyle={{ color: '#f1f5f9' }} itemStyle={{ color: '#94a3b8' }} />
               <Area type="monotone" dataKey="count" name="Alerts" stroke="#ef4444" strokeWidth={2}

@@ -315,9 +315,12 @@ export function DecisionsPage() {
               <Plus className="h-4 w-4" /> Ban IP
             </button>
           )}
-          <button type="button" onClick={() => exportCSV(rows, `decisions-${new Date().toISOString().slice(0,10)}.csv`)}
+          <button
+            type="button"
+            title={`Export current page (${rows.length} rows)`}
+            onClick={() => exportCSV(rows, `decisions-page${page}-${new Date().toISOString().slice(0,10)}.csv`)}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
-            <Download className="h-4 w-4" /> Export CSV
+            <Download className="h-4 w-4" /> Export page ({rows.length})
           </button>
           <button type="button" onClick={() => void loadData()}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">

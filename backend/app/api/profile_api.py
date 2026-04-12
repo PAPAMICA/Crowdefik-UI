@@ -6,6 +6,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.audit import log_action
 from app.core.security import hash_password, verify_password
 from app.db import get_db
 from app.models import User
@@ -61,4 +62,5 @@ def change_password(
         )
     user.password_hash = hash_password(body.new_password)
     db.commit()
+    log_action(db, user, "password_changed")
     return {"message": "Password changed successfully"}

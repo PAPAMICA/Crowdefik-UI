@@ -54,6 +54,40 @@ def _scenario_alert_counts(db: Session) -> dict[str, int]:
     return {r.scenario: r.cnt for r in rows}
 
 
+def _normalize_hub_items(raw: Any) -> list[dict[str, Any]]:
+    """Robustly flatten cscli JSON output into a list of dicts.
+
+    cscli -o json output varies significantly across CrowdSec versions:
+      v1.x old  → dict of dicts:  {"name": {"name": "...", ...}, ...}
+      v1.x new  → list of dicts:  [{"name": "...", ...}, ...]
+      some builds → dict of lists: {"name": [...fields...], ...}
+                    or top-level:  {"collections": [...], "parsers": [...]}
+
+    Strategy:
+    - If raw is a list  → keep only dict elements (skip any nested lists).
+    - If raw is a dict  → iterate values; keep dicts, unwrap lists-of-dicts.
+    - Anything else     → return [].
+    """
+    items: list[dict[str, Any]] = []
+
+    def _add(v: Any) -> None:
+        if isinstance(v, dict):
+            items.append(v)
+        elif isinstance(v, list):
+            for elem in v:
+                if isinstance(elem, dict):
+                    items.append(elem)
+
+    if isinstance(raw, list):
+        for elem in raw:
+            _add(elem)
+    elif isinstance(raw, dict):
+        for v in raw.values():
+            _add(v)
+
+    return items
+
+
 def _policy_to_dict(p: ServicePolicy) -> dict[str, Any]:
     return {
         "host": p.host,
@@ -85,13 +119,7 @@ def list_scenarios(
         return {"ok": False, "error": result.get("error"), "scenarios": []}
 
     raw = result.get("data") or []
-
-    # cscli returns a list or a dict with items key depending on version
-    items: list[dict[str, Any]] = []
-    if isinstance(raw, list):
-        items = raw
-    elif isinstance(raw, dict):
-        items = list(raw.values())
+    items = _normalize_hub_items(raw)
 
     scenarios = []
     for s in items:
@@ -153,7 +181,7 @@ def list_collections(
         return {"ok": False, "error": result.get("error"), "collections": []}
 
     raw = result.get("data") or []
-    items: list[dict[str, Any]] = raw if isinstance(raw, list) else list(raw.values())
+    items = _normalize_hub_items(raw)
 
     collections = []
     for c in items:

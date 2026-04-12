@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.db import get_db
+from app.db import get_db, slot_fmt_sql
 from app.integrations import abuseipdb_client, ipgeo_client
 from app.models import IpGeoCache, StoredAlert, StoredDecision, User
 
@@ -198,7 +198,7 @@ def get_ip_timeline(
 
     rows = (
         db.query(
-            func.strftime('%Y-%m-%d', StoredAlert.synced_at).label('day'),
+            slot_fmt_sql('%Y-%m-%d', StoredAlert.synced_at).label('day'),
             func.count(StoredAlert.id).label('cnt'),
         )
         .filter(StoredAlert.source_ip == ip, StoredAlert.synced_at >= cutoff)

@@ -117,11 +117,37 @@ function EnrichButton({ alertId, onEnriched }: { alertId: number; onEnriched: (h
   )
 }
 
+/** Build a list of page numbers (and '…' placeholders) with no duplicates. */
+function buildPageItems(page: number, pages: number): (number | '…')[] {
+  if (pages <= 7) return Array.from({ length: pages }, (_, i) => i + 1)
+
+  const delta = 2
+  const rangeSet = new Set<number>()
+  rangeSet.add(1)
+  rangeSet.add(pages)
+  for (let i = Math.max(2, page - delta); i <= Math.min(pages - 1, page + delta); i++) {
+    rangeSet.add(i)
+  }
+
+  const sorted = Array.from(rangeSet).sort((a, b) => a - b)
+  const result: (number | '…')[] = []
+  let prev = 0
+  for (const n of sorted) {
+    if (n - prev === 2) result.push(prev + 1)   // fill single-page gaps (no need for …)
+    else if (n - prev > 2) result.push('…')
+    result.push(n)
+    prev = n
+  }
+  return result
+}
+
 function Pagination({ page, total, pageSize, onChange }: { page: number; total: number; pageSize: number; onChange: (p: number) => void }) {
   const pages = Math.ceil(total / pageSize)
   if (pages <= 1) return null
   const from = (page - 1) * pageSize + 1
   const to = Math.min(page * pageSize, total)
+  const items = buildPageItems(page, pages)
+
   return (
     <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 dark:border-slate-700/50">
       <span className="text-xs text-slate-500">{from}–{to} of {total.toLocaleString()}</span>
@@ -130,19 +156,18 @@ function Pagination({ page, total, pageSize, onChange }: { page: number; total: 
           className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800">
           <ChevronLeft className="h-4 w-4" />
         </button>
-        {Array.from({ length: Math.min(pages, 7) }, (_, i) => {
-          let p: number
-          if (pages <= 7) p = i + 1
-          else if (i === 0) p = 1
-          else if (i === 6) p = pages
-          else p = Math.max(2, Math.min(pages - 1, page - 2 + i))
-          return (
-            <button key={p} type="button" onClick={() => onChange(p)}
-              className={`min-w-[30px] rounded-lg border px-2 py-1.5 text-xs ${p === page ? 'border-violet-500 bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'}`}>
-              {p}
+        {items.map((item, idx) =>
+          item === '…' ? (
+            <span key={`dots-${idx}`} className="flex min-w-[30px] items-center justify-center text-xs text-slate-400">
+              …
+            </span>
+          ) : (
+            <button key={item} type="button" onClick={() => onChange(item as number)}
+              className={`min-w-[30px] rounded-lg border px-2 py-1.5 text-xs ${item === page ? 'border-violet-500 bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'}`}>
+              {item}
             </button>
           )
-        })}
+        )}
         <button type="button" disabled={page >= pages} onClick={() => onChange(page + 1)}
           className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800">
           <ChevronRight className="h-4 w-4" />

@@ -3,7 +3,7 @@ import {
   FileText, Globe, RefreshCw, Server, Settings, Shield, Users,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Link, Navigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Area, AreaChart, CartesianGrid, Cell, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -31,6 +31,7 @@ type TopIp = {
   ip: string; count: number
   country_code: string | null; country: string | null
   city: string | null; isp: string | null
+  abuse_score?: number | null
 }
 
 type TopScenario = { scenario: string; count: number }
@@ -165,10 +166,8 @@ function PolicyTab({ host, isSuperuser }: { host: string; isSuperuser: boolean }
               <input type="checkbox" checked={form.auto_ban_enabled} disabled={!isSuperuser}
                 onChange={(e) => setForm({ ...form, auto_ban_enabled: e.target.checked })}
                 className="sr-only peer" />
-              <div className={`h-5 w-9 rounded-full transition-colors ${form.auto_ban_enabled ? 'bg-red-500' : 'bg-slate-300 dark:bg-slate-600'} peer-disabled:opacity-60`}
-                onClick={() => isSuperuser && setForm({ ...form, auto_ban_enabled: !form.auto_ban_enabled })} />
-              <div className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${form.auto_ban_enabled ? 'translate-x-4' : 'translate-x-0.5'}`}
-                onClick={() => isSuperuser && setForm({ ...form, auto_ban_enabled: !form.auto_ban_enabled })} />
+              <div aria-hidden="true" className={`h-5 w-9 rounded-full transition-colors ${form.auto_ban_enabled ? 'bg-red-500' : 'bg-slate-300 dark:bg-slate-600'} peer-disabled:opacity-60`} />
+              <div aria-hidden="true" className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${form.auto_ban_enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
             </div>
           </label>
         </div>
@@ -314,9 +313,12 @@ export function ServicePage() {
   const [loadingLogs, setLoadingLogs] = useState(true)
   const decodedHost = host ? decodeURIComponent(host) : 'Service'
   usePagePerf(decodedHost, loadingOverview || loadingLogs)
+  const [searchParams] = useSearchParams()
   const [logSearch, setLogSearch] = useState('')
   const [logTab, setLogTab] = useState<'all' | '2xx' | '3xx' | '4xx' | '5xx'>('all')
-  const [mainTab, setMainTab] = useState<'overview' | 'policy'>('overview')
+  const [mainTab, setMainTab] = useState<'overview' | 'policy'>(
+    searchParams.get('tab') === 'policy' ? 'policy' : 'overview'
+  )
 
   async function loadOverview() {
     if (!host) return
@@ -475,7 +477,7 @@ export function ServicePage() {
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}
                   tickFormatter={(v: string) => days === 1 ? v : v.slice(5)}
                   interval={days === 1 ? 3 : 'preserveStartEnd'} />
-                <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={45} tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : String(v)} />
                 <Tooltip
                   contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: '#f1f5f9' }} itemStyle={{ color: '#94a3b8' }} />
@@ -553,7 +555,7 @@ export function ServicePage() {
               <div key={ip.ip} className="flex items-center gap-3 px-5 py-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <IpBadge ip={ip.ip} countryCode={ip.country_code} />
+                    <IpBadge ip={ip.ip} countryCode={ip.country_code} score={ip.abuse_score} />
                     {ip.country && (
                       <span className="text-xs text-slate-400">{ip.city ? `${ip.city}, ` : ''}{ip.country}</span>
                     )}

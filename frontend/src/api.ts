@@ -33,10 +33,9 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   return res
 }
 
-export function wsDashboardUrl(token: string): string {
+export function wsDashboardUrl(): string {
   const base = apiBase() || `${window.location.protocol}//${window.location.host}`
   const u = new URL('/ws', base)
   u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
-  u.searchParams.set('token', token)
   return u.toString()
 }

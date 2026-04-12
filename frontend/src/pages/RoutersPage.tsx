@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
+import { useToast } from '../components/Toast'
 
 type OverrideState = 'on' | 'off' | 'none'
 type RouterRow = {
@@ -96,6 +97,7 @@ function StatusBadge({ row }: { row: RouterRow }) {
 
 export function RoutersPage() {
   const { me, loading } = useAuth()
+  const { addToast } = useToast()
   const [rows, setRows] = useState<RouterRow[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   const [bulkBusy, setBulkBusy] = useState(false)
@@ -141,7 +143,7 @@ export function RoutersPage() {
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
-        alert(err.detail ?? JSON.stringify(err))
+        addToast(err.detail ?? 'Action failed', 'error')
       }
       await reload()
     } finally {

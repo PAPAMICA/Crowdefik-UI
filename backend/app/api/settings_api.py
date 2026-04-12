@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_superuser
 from app.core import crypto
+from app.core.audit import log_action
 from app.db import get_db
 from app.integrations.instance_settings import get_or_create_instance_settings
 from app.models import User
@@ -45,7 +46,7 @@ def get_settings_api(
 def put_settings_api(
     body: InstanceSettingsUpdateIn,
     db: Annotated[Session, Depends(get_db)],
-    _: Annotated[User, Depends(require_superuser)],
+    actor: Annotated[User, Depends(require_superuser)],
 ) -> InstanceSettingsOut:
     row = get_or_create_instance_settings(db)
     if body.traefik_api_url is not None:
@@ -84,4 +85,5 @@ def put_settings_api(
     db.add(row)
     db.commit()
     db.refresh(row)
+    log_action(db, actor, "settings_updated")
     return _row_to_out(row)

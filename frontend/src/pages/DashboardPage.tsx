@@ -15,7 +15,7 @@ import { faviconUrl } from '../utils/favicon'
 
 const AttackerMap = lazy(() => import('../components/AttackerMap').then((m) => ({ default: m.AttackerMap })))
 
-type AttackerIp = { ip: string; count: number; country_code?: string | null; country?: string | null }
+type AttackerIp = { ip: string; count: number; country_code?: string | null; country?: string | null; abuse_score?: number | null }
 type Summary = {
   routers_total: number
   routers_crowdsec_effective: number
@@ -53,6 +53,7 @@ export function DashboardPage() {
   const [loadingSummary, setLoadingSummary] = useState(true)
   const [loadingTimeline, setLoadingTimeline] = useState(true)
   const [loadingServices, setLoadingServices] = useState(true)
+  const [loadingGeo, setLoadingGeo] = useState(true)
   usePagePerf('Dashboard', loadingSummary || loadingTimeline || loadingServices)
   const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
@@ -62,6 +63,7 @@ export function DashboardPage() {
     setLoadingSummary(true)
     setLoadingTimeline(true)
     setLoadingServices(true)
+    setLoadingGeo(true)
 
     void apiFetch('/api/dashboard/summary').then(async (r) => {
       if (r.ok) {
@@ -73,6 +75,7 @@ export function DashboardPage() {
     })
     void apiFetch(`/api/dashboard/geo?days=${days}`).then(async (r) => {
       if (r.ok) setGeo((await r.json()) as GeoPoint[])
+      setLoadingGeo(false)
     })
     void apiFetch(`/api/dashboard/timeline?days=${days}`).then(async (r) => {
       if (r.ok) setTimeline((await r.json()) as TimelinePoint[])
@@ -90,8 +93,12 @@ export function DashboardPage() {
   useEffect(() => {
     const token = getToken()
     if (!token) return
-    const ws = new WebSocket(wsDashboardUrl(token))
-    ws.onopen = () => setWsStatus('connected')
+    const ws = new WebSocket(wsDashboardUrl())
+    ws.onopen = () => {
+      // Send token as first message (avoids token in URL / proxy logs)
+      ws.send(JSON.stringify({ type: 'auth', token }))
+      setWsStatus('connected')
+    }
     ws.onclose = () => setWsStatus('disconnected')
     ws.onerror = () => setWsStatus('disconnected')
     ws.onmessage = (e) => {
@@ -273,8 +280,8 @@ export function DashboardPage() {
                 {summary!.top_attacker_ips.slice(0, 8).map((item, i) => (
                   <div key={item.ip} className="flex items-center gap-2">
                     <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
-                    <span className="flex-shrink-0 w-4 text-center text-[10px] font-bold text-slate-400">{item.count}</span>
-                    <IpBadge ip={item.ip} countryCode={item.country_code} />
+                    <span className="flex-shrink-0 w-10 text-right text-[10px] font-bold tabular-nums text-slate-400">{item.count.toLocaleString()}</span>
+                    <IpBadge ip={item.ip} countryCode={item.country_code} score={item.abuse_score} />
                   </div>
                 ))}
               </div>
@@ -333,10 +340,10 @@ export function DashboardPage() {
                       />
                     </div>
                     <div className="flex flex-shrink-0 items-center gap-3 text-right">
-                      <span className="w-16 text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      <span className="w-24 whitespace-nowrap text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-200">
                         {s.alert_count.toLocaleString()} alerts
                       </span>
-                      <span className="w-14 text-[10px] text-slate-400">
+                      <span className="w-14 whitespace-nowrap text-[10px] tabular-nums text-slate-400">
                         {s.unique_ips} IPs
                       </span>
                     </div>
@@ -386,7 +393,7 @@ export function DashboardPage() {
                 tickFormatter={(v: string) => days === 1 ? v : v.slice(5)}
                 interval={days === 1 ? 3 : 'preserveStartEnd'}
               />
-              <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={45} tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : String(v)} />
               <Tooltip
                 contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
                 labelStyle={{ color: '#f1f5f9' }}
@@ -410,12 +417,18 @@ export function DashboardPage() {
             <Activity className="h-4 w-4 text-violet-500" />
             <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Attacker origins</span>
           </div>
-          <span className="text-xs text-slate-400">{geo.length} unique IPs</span>
+          {loadingGeo
+            ? <Skeleton className="h-4 w-20" />
+            : <span className="text-xs text-slate-400">{geo.length} unique IPs</span>}
         </div>
-        <Suspense fallback={<div className="flex h-[340px] items-center justify-center text-sm text-slate-500">Loading map…</div>}>
-          <AttackerMap points={geo} />
-        </Suspense>
-        {geo.length === 0 && (
+        {loadingGeo ? (
+          <Skeleton className="h-[340px] w-full rounded-xl" />
+        ) : (
+          <Suspense fallback={<div className="flex h-[340px] items-center justify-center text-sm text-slate-500">Loading map…</div>}>
+            <AttackerMap points={geo} />
+          </Suspense>
+        )}
+        {!loadingGeo && geo.length === 0 && (
           <p className="mt-2 text-center text-xs text-slate-400">
             No geolocation data yet — populates every 5 min from CrowdSec alerts
           </p>

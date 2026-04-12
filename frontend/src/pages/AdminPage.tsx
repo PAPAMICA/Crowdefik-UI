@@ -3,11 +3,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
+import { useToast } from '../components/Toast'
 
 type UserRow = { id: number; username: string; is_superuser: boolean }
 
 export function AdminPage() {
   const { me, loading } = useAuth()
+  const { addToast } = useToast()
   const [users, setUsers] = useState<UserRow[]>([])
   const [selected, setSelected] = useState<number | null>(null)
   const [scopes, setScopes] = useState<string[]>([])
@@ -99,7 +101,7 @@ export function AdminPage() {
               onSubmit={async (e) => {
                 e.preventDefault()
                 const res = await apiFetch('/api/admin/users', { method: 'POST', body: JSON.stringify(newUser) })
-                if (!res.ok) { alert(await res.text()); return }
+                if (!res.ok) { const err = await res.json().catch(() => ({ detail: 'Error' })); addToast(err.detail ?? 'Failed to create user', 'error'); return }
                 setNewUser({ username: '', password: '', is_superuser: false })
                 await reloadUsers()
               }}
@@ -162,7 +164,7 @@ export function AdminPage() {
                     onClick={async () => {
                       if (!selected || !scopeName.trim()) return
                       const res = await apiFetch(`/api/admin/users/${selected}/scopes`, { method: 'POST', body: JSON.stringify({ router_name: scopeName.trim() }) })
-                      if (!res.ok) { alert(await res.text()); return }
+                      if (!res.ok) { const err = await res.json().catch(() => ({ detail: 'Error' })); addToast(err.detail ?? 'Failed to add scope', 'error'); return }
                       setScopeName('')
                       await reloadScopes(selected)
                     }}

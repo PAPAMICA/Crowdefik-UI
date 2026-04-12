@@ -1,4 +1,4 @@
-import { AlertTriangle, ExternalLink, Globe, Info, ShieldCheck, X } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Globe, Info, Loader2, ShieldCheck, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api'
@@ -47,13 +47,16 @@ function scoreClasses(score: number) {
 }
 
 // ── Modal ─────────────────────────────────────────────────────
-function Modal({ info, onClose }: { info: IpInfo; onClose: () => void }) {
+function Modal({ info, loading, onClose }: { info: IpInfo; loading: boolean; onClose: () => void }) {
   const { geo, abuse } = info
   const score = abuse?.abuseConfidenceScore ?? null
   const cc = abuse?.countryCode || geo?.countryCode || ''
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`IP details for ${info.ip}`}
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
@@ -78,7 +81,12 @@ function Modal({ info, onClose }: { info: IpInfo; onClose: () => void }) {
 
         <div className="space-y-4 p-5">
           {/* Abuse score */}
-          {score !== null ? (
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-slate-100 p-4 dark:border-slate-800">
+              <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+              <span className="text-xs text-slate-400">Loading IP data…</span>
+            </div>
+          ) : score !== null ? (
             <div className="flex items-center justify-between rounded-xl border border-slate-100 p-3 dark:border-slate-800">
               <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                 <AlertTriangle className="h-4 w-4" />
@@ -88,7 +96,7 @@ function Modal({ info, onClose }: { info: IpInfo; onClose: () => void }) {
             </div>
           ) : (
             <div className="rounded-xl border border-slate-100 p-3 text-xs text-slate-500 dark:border-slate-800">
-              No AbuseIPDB key configured — set it in Settings for abuse scores.
+              No abuse score available — AbuseIPDB key may not be configured or the API is unreachable.
             </div>
           )}
 
@@ -192,16 +200,32 @@ export function IpBadge({
 }) {
   const [open, setOpen] = useState(false)
   const [info, setInfo] = useState<IpInfo | null>(() => cache.get(ip) ?? null)
+  const [loadingInfo, setLoadingInfo] = useState(false)
   const [protected_, setProtected] = useState<boolean>(() => allowlistCache.get(ip) ?? false)
   const [hovered, setHovered] = useState(false)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Lazy fetch — only triggered on first hover to avoid mass requests on mount
+  /** Trigger a fetch if we don't have data yet; sets loadingInfo while in flight. */
+  function ensureInfoLoaded() {
+    if (info || loadingInfo) return
+    setLoadingInfo(true)
+    void fetchIpInfo(ip).then((d) => {
+      if (d) setInfo(d)
+      setLoadingInfo(false)
+    })
+    if (!allowlistCache.has(ip)) void fetchIsAllowlisted(ip).then(setProtected)
+  }
+
+  // Lazy fetch on hover (150 ms debounce)
   useEffect(() => {
     if (!hovered) return
-    if (!info) void fetchIpInfo(ip).then((d) => { if (d) setInfo(d) })
-    if (!allowlistCache.has(ip)) void fetchIsAllowlisted(ip).then(setProtected)
-  }, [hovered, ip, info])
+    ensureInfoLoaded()
+  }, [hovered, ip]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Also fetch immediately when modal opens (covers direct click without hover)
+  useEffect(() => {
+    if (open) ensureInfoLoaded()
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleMouseEnter() {
     hoverTimer.current = setTimeout(() => setHovered(true), 150)
@@ -242,6 +266,7 @@ export function IpBadge({
       {open && (
         <Modal
           info={info ?? { ip, geo: null, abuse: null }}
+          loading={loadingInfo}
           onClose={() => setOpen(false)}
         />
       )}

@@ -1,11 +1,73 @@
 services:
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  crowdefik-db:
+    image: postgres:16-alpine
+    container_name: crowdefik-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: crowdefik
+      POSTGRES_USER: crowdefik
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-crowdefik-change-me}"
+    volumes:
+      - crowdefik-pg:/var/lib/postgresql/data
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crowdefik"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "512M"
+        reservations:
+          cpus: "0.1"
+          memory: "128M"
+
+  # ── Redis (cache) ─────────────────────────────────────────────────────────────
+  crowdefik-redis:
+    image: redis:7-alpine
+    container_name: crowdefik-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - crowdefik-redis:/data
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "192M"
+        reservations:
+          cpus: "0.05"
+          memory: "64M"
+
+  # ── Backend ───────────────────────────────────────────────────────────────────
   crowdefik-backend:
     build:
       context: ./backend
     container_name: crowdefik-backend
     restart: unless-stopped
+    depends_on:
+      crowdefik-db:
+        condition: service_healthy
+      crowdefik-redis:
+        condition: service_healthy
     environment:
-      CROWDEFIK_DATABASE_URL: sqlite:////data/crowdefik.db
+      CROWDEFIK_DATABASE_URL: "postgresql+psycopg2://crowdefik:${POSTGRES_PASSWORD:-crowdefik-change-me}@crowdefik-db/crowdefik"
+      CROWDEFIK_REDIS_URL: "redis://crowdefik-redis:6379/0"
       CROWDEFIK_JWT_SECRET: "${CROWDEFIK_JWT_SECRET:-change-me-to-a-long-random-secret}"
       CROWDEFIK_APP_SECRET: "${CROWDEFIK_APP_SECRET:-change-me-to-a-long-random-secret}"
       CROWDEFIK_BOOTSTRAP_ADMIN_USERNAME: "${CROWDEFIK_BOOTSTRAP_ADMIN_USERNAME:-admin}"
@@ -13,23 +75,49 @@ services:
       CROWDEFIK_TRAEFIK_CUSTOM_DIR: /traefik-custom
       CROWDEFIK_CORS_ORIGINS: "${CROWDEFIK_CORS_ORIGINS:-*}"
       CROWDEFIK_TRAEFIK_LOG_PATH: /traefik-logs/access.log
+      CROWDEFIK_LOG_LEVEL: "${CROWDEFIK_LOG_LEVEL:-INFO}"
     volumes:
-      - crowdefik-data:/data
       - /_data/apps/traefik/config/custom:/traefik-custom:rw
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /_data/apps/traefik/logs:/traefik-logs:ro
     networks:
       - proxy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "512M"
+        reservations:
+          cpus: "0.25"
+          memory: "128M"
 
+  # ── Frontend ──────────────────────────────────────────────────────────────────
   crowdefik-frontend:
     build:
       context: ./frontend
     container_name: crowdefik-frontend
     restart: unless-stopped
     depends_on:
-      - crowdefik-backend
+      crowdefik-backend:
+        condition: service_healthy
     networks:
       - proxy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "128M"
+        reservations:
+          cpus: "0.05"
+          memory: "32M"
 
 networks:
   proxy:
@@ -37,4 +125,5 @@ networks:
     name: proxy
 
 volumes:
-  crowdefik-data:
+  crowdefik-pg:
+  crowdefik-redis:

@@ -12,3 +12,9 @@ pyyaml==6.0.2
 cachetools==5.5.0
 cryptography==44.0.0
 pydantic-settings==2.6.1
+# PostgreSQL driver
+psycopg2-binary==2.9.10
+# Redis client (optional cache backend — falls back to in-memory if not configured)
+redis==5.2.1
+# Rate limiting (brute-force protection)
+slowapi==0.1.9

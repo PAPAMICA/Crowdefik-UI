@@ -93,13 +93,22 @@ def _extract_target_host(alert: dict) -> str | None:
 
 def sync_alerts(db: Session, alerts: list[dict]) -> int:
     """Upsert alerts. Returns count of new rows inserted."""
+    if not alerts:
+        return 0
     now = datetime.utcnow()
+
+    # Pre-load all existing IDs in one query to eliminate N+1 SELECT per alert
+    incoming_ids = [a["id"] for a in alerts if isinstance(a.get("id"), int)]
+    existing_ids: set[int] = {
+        r[0] for r in db.query(StoredAlert.id).filter(StoredAlert.id.in_(incoming_ids)).all()
+    }
+
     inserted = 0
     for a in alerts:
         alert_id = a.get("id")
         if not isinstance(alert_id, int):
             continue
-        if db.get(StoredAlert, alert_id):
+        if alert_id in existing_ids:
             continue
         src = a.get("source") or {}
         lat = src.get("latitude")
@@ -126,13 +135,22 @@ def sync_alerts(db: Session, alerts: list[dict]) -> int:
 
 
 def sync_decisions(db: Session, decisions: list[dict]) -> int:
+    if not decisions:
+        return 0
     now = datetime.utcnow()
+
+    # Pre-load all existing IDs in one query to eliminate N+1 SELECT per decision
+    incoming_ids = [d["id"] for d in decisions if isinstance(d.get("id"), int)]
+    existing_ids: set[int] = {
+        r[0] for r in db.query(StoredDecision.id).filter(StoredDecision.id.in_(incoming_ids)).all()
+    }
+
     inserted = 0
     for d in decisions:
         decision_id = d.get("id")
         if not isinstance(decision_id, int):
             continue
-        if db.get(StoredDecision, decision_id):
+        if decision_id in existing_ids:
             continue
         row = StoredDecision(
             id=decision_id,
@@ -356,6 +374,88 @@ def _backfill_from_traefik_log(db: Session, rows: list[StoredAlert]) -> int:
     return updated
 
 
+def enrich_abuse_scores(db: Session, batch_size: int = 15) -> int:
+    """Pre-fetch AbuseIPDB scores for attacker IPs that are not yet cached or are stale.
+
+    Runs during every sync cycle.  The batch is intentionally small (default 15) to
+    stay well within AbuseIPDB's free-tier limit (1 000 req/day ≈ 41/hour ≈ 3/5 min).
+    IPs are prioritised by alert frequency so the most-seen attackers get scores first.
+    Only IPs whose score is absent or older than 7 days are queried.
+    """
+    from app.integrations import abuseipdb_client
+
+    # Check if API key is configured at all — avoid 15 pointless DB reads otherwise
+    from app.integrations.instance_settings import get_or_create_instance_settings
+    inst = get_or_create_instance_settings(db)
+    if not inst.abuseipdb_api_key_enc:
+        return 0
+
+    stale_cutoff = datetime.utcnow() - timedelta(days=7)
+
+    # Most-attacked IPs that either have no abuse score or a stale one
+    rows = (
+        db.query(StoredAlert.source_ip)
+        .filter(StoredAlert.source_ip.isnot(None))
+        .distinct()
+        .all()
+    )
+    candidate_ips = [r[0] for r in rows if r[0]]
+    if not candidate_ips:
+        return 0
+
+    # Build a set of IPs that already have a fresh score
+    cached_rows = (
+        db.query(IpGeoCache.ip)
+        .filter(
+            IpGeoCache.ip.in_(candidate_ips),
+            IpGeoCache.abuse_updated_at.isnot(None),
+            IpGeoCache.abuse_updated_at >= stale_cutoff,
+        )
+        .all()
+    )
+    already_fresh = {r.ip for r in cached_rows}
+
+    # IPs to enrich: prioritise by alert count (most attacked first)
+    from sqlalchemy import func
+    ip_counts = (
+        db.query(StoredAlert.source_ip, func.count(StoredAlert.id).label("cnt"))
+        .filter(StoredAlert.source_ip.in_(candidate_ips))
+        .group_by(StoredAlert.source_ip)
+        .order_by(func.count(StoredAlert.id).desc())
+        .all()
+    )
+    to_enrich = [ip for ip, _ in ip_counts if ip not in already_fresh][:batch_size]
+
+    if not to_enrich:
+        return 0
+
+    count = 0
+    for ip in to_enrich:
+        result = abuseipdb_client.check_ip(db, ip)
+        if result is None:
+            continue
+        cache_row = db.get(IpGeoCache, ip)
+        if cache_row is None:
+            cache_row = IpGeoCache(ip=ip, updated_at=datetime.utcnow())
+            db.add(cache_row)
+        cache_row.abuse_score = result.get("abuseConfidenceScore")
+        cache_row.abuse_total_reports = result.get("totalReports")
+        cache_row.abuse_is_tor = result.get("isTor")
+        cache_row.abuse_last_reported_at = result.get("lastReportedAt")
+        cache_row.abuse_domain = result.get("domain")
+        cache_row.abuse_updated_at = datetime.utcnow()
+        # Also fill country_code from AbuseIPDB if geo hasn't set it yet
+        if not cache_row.country_code and result.get("countryCode"):
+            cache_row.country_code = result.get("countryCode")
+        count += 1
+
+    if count:
+        db.commit()
+        log.info("AbuseIPDB pre-fetch: scored %d IPs", count)
+
+    return count
+
+
 def _warm_traefik_cache(db: Session) -> None:
     """Refresh the Traefik router cache in the background so dashboard calls never block.
 
@@ -368,10 +468,8 @@ def _warm_traefik_cache(db: Session) -> None:
 
     try:
         routers = traefik_client.fetch_routers_sync(db)
-        cache_mod._store["traefik:routers"] = (
-            __import__("time").monotonic() + 2 * 60 * 60,  # 2-hour TTL
-            routers,
-        )
+        # Use set_value() instead of direct _store access to ensure thread-safety
+        cache_mod.set_value("traefik:routers", routers, ttl_seconds=2 * 60 * 60)
         log.debug("Traefik router cache warmed: %d routers", len(routers))
     except Exception as exc:
         log.debug("Traefik cache warm skipped: %s", exc)
@@ -462,6 +560,7 @@ def run_full_sync(db: Session) -> dict:
     new_alerts = sync_alerts(db, alerts_raw)
     new_decisions = sync_decisions(db, decisions_raw)
     geo_enriched = enrich_geo(db)
+    abuse_scored = enrich_abuse_scores(db)
     backfill_target_hosts(db)
     cleaned = cleanup_old(db)
     auto_bans = _apply_service_policies(db)
@@ -470,12 +569,16 @@ def run_full_sync(db: Session) -> dict:
     # wait for a live Traefik API call when serving user requests.
     _warm_traefik_cache(db)
 
-    log.info("Sync done: +%d alerts, +%d decisions, %d IPs geolocated, %d old rows removed, %d auto-bans",
-             new_alerts, new_decisions, geo_enriched, cleaned, auto_bans)
+    log.info(
+        "Sync done: +%d alerts, +%d decisions, %d IPs geolocated, %d abuse scores fetched, "
+        "%d old rows removed, %d auto-bans",
+        new_alerts, new_decisions, geo_enriched, abuse_scored, cleaned, auto_bans,
+    )
     return {
         "new_alerts": new_alerts,
         "new_decisions": new_decisions,
         "geo_enriched": geo_enriched,
+        "abuse_scored": abuse_scored,
         "cleaned": cleaned,
         "auto_bans": auto_bans,
     }

@@ -5,6 +5,7 @@ import { ThemeProvider } from './theme'
 import { ToastProvider } from './components/Toast'
 import { Layout } from './components/Layout'
 import { Skeleton } from './components/Skeleton'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 // Lazy-load all pages to reduce initial bundle size
 const LoginPage       = lazy(() => import('./pages/LoginPage').then((m) => ({ default: m.LoginPage })))
@@ -52,6 +53,7 @@ export default function App() {
         <ToastProvider>
           <BrowserRouter>
             <Suspense fallback={<PageLoader />}>
+              <ErrorBoundary>
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
                 <Route
@@ -81,6 +83,7 @@ export default function App() {
                 </Route>
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
+              </ErrorBoundary>
             </Suspense>
           </BrowserRouter>
         </ToastProvider>

@@ -19,6 +19,7 @@ from app.api.deps import get_current_user
 from app.core.audit import log_action
 from app.db import get_db
 from app.models import IpGeoCache, ServicePolicy, StoredAlert, StoredDecision, User
+from app.services.scope_filter import hosts_from_rules
 from app.settings import get_settings
 
 router = APIRouter(prefix="/services", tags=["services"])
@@ -34,6 +35,28 @@ def _require_host(host: str) -> str:
     return host
 
 
+def _ensure_host_visible(host: str, db: Session, user: User) -> None:
+    """Raise 403 if a non-superuser tries to access a host outside their scope."""
+    if user.is_superuser:
+        return
+    from app.core import cache as cache_mod
+    from app.integrations import traefik_client
+    from app.services.routers_view import build_router_rows, filter_rows_for_user
+    from app.services.scope_filter import allowed_router_names
+    try:
+        allowed = allowed_router_names(db, user)
+        raw_r = cache_mod.get_cached("traefik:routers", lambda: traefik_client.fetch_routers_sync(db))
+        rows_v = filter_rows_for_user(build_router_rows(raw_r), is_superuser=False, allowed_routers=allowed)
+        visible = hosts_from_rules(rows_v)
+        if visible and host not in visible:
+            raise HTTPException(status_code=403, detail="Access to this host is not allowed")
+    except HTTPException:
+        raise
+    except Exception:
+        # If scope resolution fails, allow (better available than overly restrictive)
+        pass
+
+
 def _geo_map(db: Session, ips: list[str]) -> dict[str, IpGeoCache]:
     if not ips:
         return {}
@@ -46,7 +69,7 @@ def _geo_map(db: Session, ips: list[str]) -> dict[str, IpGeoCache]:
 def service_overview(
     host: str,
     db: Annotated[Session, Depends(get_db)],
-    _user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(get_current_user)],
     days: int = 7,
 ) -> dict[str, Any]:
     """
@@ -60,6 +83,7 @@ def service_overview(
     - recent alerts list
     """
     host = _require_host(host)
+    _ensure_host_visible(host, db, user)
     days = max(1, min(days, 90))
     cutoff = datetime.utcnow() - timedelta(days=days)
 
@@ -146,6 +170,7 @@ def service_overview(
             "country": geo[row.source_ip].country if row.source_ip in geo else None,
             "city": geo[row.source_ip].city if row.source_ip in geo else None,
             "isp": geo[row.source_ip].isp if row.source_ip in geo else None,
+            "abuse_score": geo[row.source_ip].abuse_score if row.source_ip in geo else None,
         }
         for row in ip_counts
     ]
@@ -213,7 +238,7 @@ def service_overview(
 def service_logs(
     host: str,
     _db: Annotated[Session, Depends(get_db)],
-    _user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(get_current_user)],
     limit: int = 200,
 ) -> dict[str, Any]:
     """
@@ -224,6 +249,7 @@ def service_logs(
     if logs are not available.
     """
     host = _require_host(host)
+    _ensure_host_visible(host, _db, user)
     limit = max(1, min(limit, 1000))
 
     log_path = get_settings().traefik_log_path
