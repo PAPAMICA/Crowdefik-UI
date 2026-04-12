@@ -5,7 +5,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart,
+  Area, AreaChart, Cell, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { apiFetch } from '../api'
@@ -259,6 +259,7 @@ const SCENARIO_COLORS = [
   '#6366f1', '#f59e0b', '#ef4444', '#10b981', '#3b82f6',
   '#ec4899', '#8b5cf6', '#14b8a6', '#f97316', '#64748b',
 ]
+const IP_COLORS = ['#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#06b6d4', '#6366f1', '#a855f7']
 
 function statusColor(code: number | null) {
   if (!code) return 'text-slate-400'
@@ -547,71 +548,53 @@ export function ServicePage() {
         </div>
       </div>
 
-      {/* Top attacker IPs */}
-      <Section title="Top attacker IPs" icon={Globe} iconColor="text-red-500">
+      {/* Top attacker IPs — donut */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+        <div className="mb-3 flex items-center gap-2">
+          <Globe className="h-4 w-4 text-red-500" />
+          <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Top attacker IPs</span>
+        </div>
         {loadingOverview ? (
-          <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
-            {Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)}
+          <div className="flex items-center gap-4 pt-2">
+            <Skeleton className="h-[180px] w-[150px] rounded-full" />
+            <div className="flex-1 space-y-2">
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-5 w-full" />)}
+            </div>
           </div>
-        ) : overview?.top_ips?.length ? (
-          <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
-            {overview.top_ips.map((ip) => (
-              <div key={ip.ip} className="flex items-center gap-3 px-5 py-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <IpBadge ip={ip.ip} countryCode={ip.country_code} score={ip.abuse_score} />
-                    {ip.country && (
-                      <span className="text-xs text-slate-400">{ip.city ? `${ip.city}, ` : ''}{ip.country}</span>
-                    )}
-                    {ip.isp && <span className="truncate text-xs text-slate-400">{ip.isp}</span>}
-                  </div>
+        ) : (overview?.top_ips?.length ?? 0) > 0 ? (
+          <div className="flex items-center gap-3">
+            <ResponsiveContainer width={150} height={220}>
+              <PieChart>
+                <Pie
+                  data={overview!.top_ips.slice(0, 8)}
+                  dataKey="count" nameKey="ip"
+                  cx="50%" cy="50%" innerRadius={48} outerRadius={68} paddingAngle={2}
+                >
+                  {overview!.top_ips.slice(0, 8).map((_, i) => (
+                    <Cell key={i} fill={IP_COLORS[i % IP_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+                  formatter={(v, _n, entry) => [v, (entry.payload as TopIp).ip]}
+                  labelFormatter={() => ''}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="flex-1 min-w-0 space-y-2">
+              {overview!.top_ips.slice(0, 8).map((item, i) => (
+                <div key={item.ip} className="flex items-center gap-2">
+                  <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: IP_COLORS[i % IP_COLORS.length] }} />
+                  <span className="flex-shrink-0 w-10 text-right text-[10px] font-bold tabular-nums text-slate-400">{item.count}</span>
+                  <IpBadge ip={item.ip} countryCode={item.country_code} score={item.abuse_score} />
                 </div>
-                <div className="flex-shrink-0">
-                  <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-400">
-                    {ip.count} alert{ip.count !== 1 ? 's' : ''}
-                  </span>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         ) : (
-          <p className="px-5 py-8 text-center text-sm text-slate-400">
-            No attacker data for this period
-          </p>
+          <p className="py-8 text-center text-sm text-slate-400">No attacker data for this period</p>
         )}
-      </Section>
-
-      {/* Top IPs distribution chart */}
-      {!loadingOverview && (overview?.top_ips?.length ?? 0) > 0 && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
-          <div className="mb-4 flex items-center gap-2">
-            <Globe className="h-4 w-4 text-red-500" />
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Attack distribution by IP</span>
-            <span className="text-xs text-slate-400">— top {overview!.top_ips.length} attackers</span>
-          </div>
-          <ResponsiveContainer width="100%" height={Math.max(120, overview!.top_ips.length * 28)}>
-            <BarChart
-              data={overview!.top_ips.map(ip => ({ ip: ip.ip, count: ip.count }))}
-              layout="vertical"
-              margin={{ left: 8, right: 24, top: 0, bottom: 0 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" horizontal={false} />
-              <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}
-                tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)} />
-              <YAxis type="category" dataKey="ip" tick={{ fontSize: 10, fill: '#94a3b8', fontFamily: 'monospace' }}
-                axisLine={false} tickLine={false} width={110} />
-              <Tooltip
-                contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
-                formatter={(v: unknown) => [String(v ?? ''), 'Alerts']} />
-              <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={20}>
-                {overview!.top_ips.map((_, idx) => (
-                  <Cell key={idx} fill={`hsl(${(idx * 37) % 360}, 70%, 55%)`} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+      </div>
 
       {/* Recent alerts */}
       <Section title="Recent alerts" icon={AlertTriangle} iconColor="text-amber-500">

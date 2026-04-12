@@ -5,7 +5,7 @@ import {
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell,
+  Area, AreaChart, Cell, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { apiFetch } from '../api'
@@ -287,8 +287,9 @@ export function IpPage() {
         </div>
       </div>
 
-      {/* Service distribution — computed from loaded alerts */}
+      {/* Attacks by service — donut */}
       {(() => {
+        const COLORS = ['#6366f1', '#f59e0b', '#ef4444', '#10b981', '#3b82f6', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316', '#64748b']
         const dist = Object.entries(
           allAlerts.reduce<Record<string, number>>((acc, a) => {
             if (a.target_host) acc[a.target_host] = (acc[a.target_host] ?? 0) + (a.events_count || 1)
@@ -296,31 +297,52 @@ export function IpPage() {
           }, {})
         )
           .sort((a, b) => b[1] - a[1])
-          .slice(0, 10)
+          .slice(0, 8)
+          .map(([host, count]) => ({ host, count }))
         if (!dist.length) return null
         return (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
-            <div className="mb-4 flex items-center gap-2">
+            <div className="mb-3 flex items-center gap-2">
               <Globe className="h-4 w-4 text-violet-500" />
               <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Attacks by service</span>
-              <span className="text-xs text-slate-400">— based on {allAlerts.length} loaded alerts</span>
             </div>
-            <ResponsiveContainer width="100%" height={Math.max(80, dist.length * 28)}>
-              <BarChart data={dist.map(([host, count]) => ({ host, count }))} layout="vertical"
-                margin={{ left: 8, right: 24, top: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" horizontal={false} />
-                <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="host" tick={{ fontSize: 10, fill: '#94a3b8', fontFamily: 'monospace' }}
-                  axisLine={false} tickLine={false} width={130} />
-                <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v: unknown) => [String(v ?? ''), 'Events']} />
-                <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={18}>
-                  {dist.map((_, idx) => (
-                    <Cell key={idx} fill={`hsl(${250 + idx * 25}, 65%, 55%)`} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="flex items-center gap-4">
+              <ResponsiveContainer width={160} height={200}>
+                <PieChart>
+                  <Pie data={dist} dataKey="count" nameKey="host"
+                    cx="50%" cy="50%" innerRadius={48} outerRadius={72} paddingAngle={2}>
+                    {dist.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+                    formatter={(v, _n, entry) => [v, (entry.payload as { host: string }).host]}
+                    labelFormatter={() => ''}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex-1 min-w-0 space-y-2">
+                {dist.map((item, i) => (
+                  <button
+                    key={item.host}
+                    type="button"
+                    onClick={() => navigate(`/services/${encodeURIComponent(item.host)}`)}
+                    className="flex w-full items-center gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
+                  >
+                    <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
+                    <span className="flex-shrink-0 w-8 text-right text-[10px] font-bold tabular-nums text-slate-400">{item.count}</span>
+                    <img
+                      src={faviconUrl(item.host)}
+                      alt="" width={12} height={12}
+                      className="h-3 w-3 flex-shrink-0 rounded-sm object-contain"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }}
+                    />
+                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-600 hover:text-violet-600 dark:text-slate-300 dark:hover:text-violet-400" title={item.host}>
+                      {item.host}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )
       })()}

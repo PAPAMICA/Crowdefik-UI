@@ -2,8 +2,8 @@ import { Download, Filter, RefreshCw, Search, Server } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import {
-  Bar, BarChart, CartesianGrid, Cell,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Cell, Pie, PieChart,
+  ResponsiveContainer, Tooltip,
 } from 'recharts'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
@@ -178,99 +178,145 @@ export function LogsAccessPage() {
         </div>
       </div>
 
-      {/* Distribution charts */}
+      {/* Distribution charts — 4 donuts */}
       {(stats?.available !== false) && (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+
           {/* Top Hosts */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
-            <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Top Hosts</div>
-            {fetchingStats ? <Skeleton className="h-[120px] w-full" /> : (stats?.top_hosts?.length ?? 0) > 0 ? (
-              <ResponsiveContainer width="100%" height={120}>
-                <BarChart data={stats!.top_hosts.slice(0, 6).map(h => ({ name: h.host.replace(/^www\./, ''), count: h.count }))}
-                  layout="vertical" margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={80} />
-                  <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
-                    formatter={(v: unknown) => [String(v ?? ''), 'Requests']} />
-                  <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14}>
-                    {stats!.top_hosts.slice(0, 6).map((_, idx) => <Cell key={idx} fill={`hsl(${250 + idx * 20}, 65%, 55%)`} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex h-[120px] items-center justify-center text-xs text-slate-400">No data</div>
-            )}
-          </div>
+          {(() => {
+            const COLORS = ['#6366f1', '#8b5cf6', '#3b82f6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899']
+            const data = stats?.top_hosts?.slice(0, 7) ?? []
+            return (
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Top Hosts</div>
+                {fetchingStats ? <Skeleton className="h-[150px] w-full" /> : data.length > 0 ? (
+                  <div className="flex items-center gap-3">
+                    <ResponsiveContainer width={90} height={150}>
+                      <PieChart>
+                        <Pie data={data} dataKey="count" nameKey="host" cx="50%" cy="50%" innerRadius={26} outerRadius={42} paddingAngle={2}>
+                          {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                        </Pie>
+                        <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
+                          formatter={(v, _n, e) => [v, (e.payload as { host: string }).host]} labelFormatter={() => ''} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="flex-1 min-w-0 space-y-1">
+                      {data.map((h, i) => (
+                        <div key={h.host} className="flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
+                          <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-slate-600 dark:text-slate-300" title={h.host}>{h.host.replace(/^www\./, '')}</span>
+                          <span className="flex-shrink-0 text-[10px] font-bold tabular-nums text-slate-500">{h.count.toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : <div className="flex h-[150px] items-center justify-center text-xs text-slate-400">No data</div>}
+              </div>
+            )
+          })()}
 
           {/* Methods */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
-            <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Methods</div>
-            {fetchingStats ? <Skeleton className="h-[120px] w-full" /> : (stats?.top_methods?.length ?? 0) > 0 ? (
-              <ResponsiveContainer width="100%" height={120}>
-                <BarChart data={stats!.top_methods} layout="vertical" margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="method" tick={{ fontSize: 9, fill: '#94a3b8', fontFamily: 'monospace' }} axisLine={false} tickLine={false} width={40} />
-                  <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
-                    formatter={(v: unknown) => [String(v ?? ''), 'Requests']} />
-                  <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14} fill="#6366f1" />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex h-[120px] items-center justify-center text-xs text-slate-400">No data</div>
-            )}
-          </div>
+          {(() => {
+            const METHOD_COLORS: Record<string, string> = {
+              GET: '#22c55e', POST: '#6366f1', PUT: '#f59e0b', PATCH: '#f97316',
+              DELETE: '#ef4444', HEAD: '#06b6d4', OPTIONS: '#94a3b8',
+            }
+            const data = stats?.top_methods ?? []
+            return (
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Methods</div>
+                {fetchingStats ? <Skeleton className="h-[150px] w-full" /> : data.length > 0 ? (
+                  <div className="flex items-center gap-3">
+                    <ResponsiveContainer width={90} height={150}>
+                      <PieChart>
+                        <Pie data={data} dataKey="count" nameKey="method" cx="50%" cy="50%" innerRadius={26} outerRadius={42} paddingAngle={2}>
+                          {data.map((m) => <Cell key={m.method} fill={METHOD_COLORS[m.method] ?? '#94a3b8'} />)}
+                        </Pie>
+                        <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
+                          formatter={(v, _n, e) => [v, (e.payload as { method: string }).method]} labelFormatter={() => ''} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="flex-1 min-w-0 space-y-1">
+                      {data.map((m) => (
+                        <div key={m.method} className="flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: METHOD_COLORS[m.method] ?? '#94a3b8' }} />
+                          <span className="flex-1 font-mono text-[10px] font-semibold text-slate-600 dark:text-slate-300">{m.method}</span>
+                          <span className="flex-shrink-0 text-[10px] font-bold tabular-nums text-slate-500">{m.count.toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : <div className="flex h-[150px] items-center justify-center text-xs text-slate-400">No data</div>}
+              </div>
+            )
+          })()}
 
           {/* Status codes */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
-            <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Status codes</div>
-            {fetchingStats ? <Skeleton className="h-[120px] w-full" /> : (stats?.status_dist?.length ?? 0) > 0 ? (
-              <>
-                <ResponsiveContainer width="100%" height={80}>
-                  <BarChart data={stats!.status_dist} margin={{ left: 0, right: 0, top: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.1)" vertical={false} />
-                    <XAxis dataKey="status" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                    <YAxis hide />
-                    <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
-                      formatter={(v: unknown) => [String(v ?? ''), 'Requests']} />
-                    <Bar dataKey="count" radius={[3, 3, 0, 0]} maxBarSize={30}>
-                      {stats!.status_dist.map((s) => <Cell key={s.status} fill={STATUS_COLORS[s.status] ?? '#94a3b8'} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {stats!.status_dist.map((s) => (
-                    <span key={s.status} className="inline-flex items-center gap-1 text-[10px] text-slate-500">
-                      <span className="h-2 w-2 rounded-full" style={{ background: STATUS_COLORS[s.status] ?? '#94a3b8' }} />
-                      {s.status}: {s.count.toLocaleString()}
-                    </span>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div className="flex h-[120px] items-center justify-center text-xs text-slate-400">No data</div>
-            )}
-          </div>
+          {(() => {
+            const data = stats?.status_dist ?? []
+            return (
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Status codes</div>
+                {fetchingStats ? <Skeleton className="h-[150px] w-full" /> : data.length > 0 ? (
+                  <div className="flex items-center gap-3">
+                    <ResponsiveContainer width={90} height={150}>
+                      <PieChart>
+                        <Pie data={data} dataKey="count" nameKey="status" cx="50%" cy="50%" innerRadius={26} outerRadius={42} paddingAngle={2}>
+                          {data.map((s) => <Cell key={s.status} fill={STATUS_COLORS[s.status] ?? '#94a3b8'} />)}
+                        </Pie>
+                        <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
+                          formatter={(v, _n, e) => [v, (e.payload as { status: string }).status]} labelFormatter={() => ''} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="flex-1 min-w-0 space-y-1">
+                      {data.map((s) => (
+                        <div key={s.status} className="flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: STATUS_COLORS[s.status] ?? '#94a3b8' }} />
+                          <span className="flex-1 font-mono text-[10px] font-semibold" style={{ color: STATUS_COLORS[s.status] ?? '#94a3b8' }}>{s.status}</span>
+                          <span className="flex-shrink-0 text-[10px] font-bold tabular-nums text-slate-500">{s.count.toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : <div className="flex h-[150px] items-center justify-center text-xs text-slate-400">No data</div>}
+              </div>
+            )
+          })()}
 
           {/* Top Client IPs */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
-            <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Top Client IPs</div>
-            {fetchingStats ? <Skeleton className="h-[120px] w-full" /> : (stats?.top_ips?.length ?? 0) > 0 ? (
-              <ResponsiveContainer width="100%" height={120}>
-                <BarChart data={stats!.top_ips.slice(0, 6).map(i => ({ ip: i.ip, count: i.count }))}
-                  layout="vertical" margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="ip" tick={{ fontSize: 8, fill: '#94a3b8', fontFamily: 'monospace' }} axisLine={false} tickLine={false} width={90} />
-                  <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
-                    formatter={(v: unknown) => [String(v ?? ''), 'Requests']} />
-                  <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14}>
-                    {stats!.top_ips.slice(0, 6).map((_, idx) => <Cell key={idx} fill={`hsl(${10 + idx * 20}, 70%, 55%)`} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex h-[120px] items-center justify-center text-xs text-slate-400">No data</div>
-            )}
-          </div>
+          {(() => {
+            const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#6366f1', '#a855f7']
+            const data = stats?.top_ips?.slice(0, 7) ?? []
+            return (
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Top Client IPs</div>
+                {fetchingStats ? <Skeleton className="h-[150px] w-full" /> : data.length > 0 ? (
+                  <div className="flex items-center gap-3">
+                    <ResponsiveContainer width={90} height={150}>
+                      <PieChart>
+                        <Pie data={data} dataKey="count" nameKey="ip" cx="50%" cy="50%" innerRadius={26} outerRadius={42} paddingAngle={2}>
+                          {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                        </Pie>
+                        <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
+                          formatter={(v, _n, e) => [v, (e.payload as { ip: string }).ip]} labelFormatter={() => ''} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="flex-1 min-w-0 space-y-1">
+                      {data.map((item, i) => (
+                        <div key={item.ip} className="flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
+                          {item.country_code && <CountryFlag code={item.country_code} size={10} />}
+                          <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-slate-600 dark:text-slate-300" title={item.ip}>{item.ip}</span>
+                          <span className="flex-shrink-0 text-[10px] font-bold tabular-nums text-slate-500">{item.count.toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : <div className="flex h-[150px] items-center justify-center text-xs text-slate-400">No data</div>}
+              </div>
+            )
+          })()}
+
         </div>
       )}
 
