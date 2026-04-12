@@ -93,7 +93,7 @@ type Decision = {
 
 type DecisionPage = { total: number; page: number; pages: number; decisions: Decision[] }
 
-const PAGE_SIZE = 25
+const PAGE_SIZE = 100
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 

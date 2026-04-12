@@ -447,9 +447,9 @@ export function ServicePage() {
         )}
       </div>
 
-      {/* Timeline + Scenarios */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Timeline — 2/3 */}
+      {/* Timeline + Scenarios + Top IPs */}
+      <div className="grid gap-6 lg:grid-cols-4">
+        {/* Timeline — 2/4 */}
         <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -499,7 +499,7 @@ export function ServicePage() {
           )}
         </div>
 
-        {/* Top scenarios — 1/3 */}
+        {/* Top scenarios — 1/4 */}
         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
           <div className="mb-4 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-amber-500" />
@@ -546,54 +546,52 @@ export function ServicePage() {
             </div>
           )}
         </div>
-      </div>
 
-      {/* Top attacker IPs — donut */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
-        <div className="mb-3 flex items-center gap-2">
-          <Globe className="h-4 w-4 text-red-500" />
-          <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Top attacker IPs</span>
+        {/* Top attacker IPs — 1/4 */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+          <div className="mb-3 flex items-center gap-2">
+            <Globe className="h-4 w-4 text-red-500" />
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Top attacker IPs</span>
+          </div>
+          {loadingOverview ? (
+            <div className="space-y-2 pt-2">
+              <Skeleton className="mx-auto h-[110px] w-[110px] rounded-full" />
+              {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-4 w-full" />)}
+            </div>
+          ) : (overview?.top_ips?.length ?? 0) > 0 ? (
+            <>
+              <ResponsiveContainer width="100%" height={110}>
+                <PieChart>
+                  <Pie
+                    data={overview!.top_ips.slice(0, 8)}
+                    dataKey="count" nameKey="ip"
+                    cx="50%" cy="50%" innerRadius={28} outerRadius={50} paddingAngle={2}
+                  >
+                    {overview!.top_ips.slice(0, 8).map((_, i) => (
+                      <Cell key={i} fill={IP_COLORS[i % IP_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+                    formatter={(v, _n, entry) => [v, (entry.payload as TopIp).ip]}
+                    labelFormatter={() => ''}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="mt-2 space-y-1.5">
+                {overview!.top_ips.slice(0, 6).map((item, i) => (
+                  <div key={item.ip} className="flex items-center gap-2 text-xs">
+                    <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: IP_COLORS[i % IP_COLORS.length] }} />
+                    <span className="flex-shrink-0 w-8 text-right tabular-nums text-slate-400">{item.count}</span>
+                    <IpBadge ip={item.ip} countryCode={item.country_code} score={item.abuse_score} />
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="py-8 text-center text-sm text-slate-400">No attacker data for this period</p>
+          )}
         </div>
-        {loadingOverview ? (
-          <div className="flex items-center gap-4 pt-2">
-            <Skeleton className="h-[180px] w-[150px] rounded-full" />
-            <div className="flex-1 space-y-2">
-              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-5 w-full" />)}
-            </div>
-          </div>
-        ) : (overview?.top_ips?.length ?? 0) > 0 ? (
-          <div className="flex items-center gap-3">
-            <ResponsiveContainer width={150} height={220}>
-              <PieChart>
-                <Pie
-                  data={overview!.top_ips.slice(0, 8)}
-                  dataKey="count" nameKey="ip"
-                  cx="50%" cy="50%" innerRadius={48} outerRadius={68} paddingAngle={2}
-                >
-                  {overview!.top_ips.slice(0, 8).map((_, i) => (
-                    <Cell key={i} fill={IP_COLORS[i % IP_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
-                  formatter={(v, _n, entry) => [v, (entry.payload as TopIp).ip]}
-                  labelFormatter={() => ''}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="flex-1 min-w-0 space-y-2">
-              {overview!.top_ips.slice(0, 8).map((item, i) => (
-                <div key={item.ip} className="flex items-center gap-2">
-                  <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: IP_COLORS[i % IP_COLORS.length] }} />
-                  <span className="flex-shrink-0 w-10 text-right text-[10px] font-bold tabular-nums text-slate-400">{item.count}</span>
-                  <IpBadge ip={item.ip} countryCode={item.country_code} score={item.abuse_score} />
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <p className="py-8 text-center text-sm text-slate-400">No attacker data for this period</p>
-        )}
       </div>
 
       {/* Recent alerts */}

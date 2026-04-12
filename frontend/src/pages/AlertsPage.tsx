@@ -105,7 +105,7 @@ type Alert = {
   [k: string]: unknown
 }
 
-const PAGE_SIZE = 25
+const PAGE_SIZE = 100
 
 // ── Scenario coloring ──────────────────────────────────────────────────────────
 const PALETTES = [

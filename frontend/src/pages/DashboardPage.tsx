@@ -186,7 +186,7 @@ export function DashboardPage() {
       </div>
 
       {/* Charts */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-3">
         {/* Attack scenarios — donut */}
         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
           <div className="mb-2 flex items-center gap-2">
@@ -290,10 +290,8 @@ export function DashboardPage() {
             <div className="flex h-[220px] items-center justify-center text-sm text-slate-400">No data yet</div>
           )}
         </div>
-      </div>
 
-      {/* Attacks by service */}
-      {(loadingServices || serviceStats.length > 0) && (
+        {/* Attacks by service — 3rd col */}
         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
           <div className="mb-4 flex items-center gap-2">
             <ShieldAlert className="h-4 w-4 text-violet-500" />
@@ -304,14 +302,14 @@ export function DashboardPage() {
               {Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3">
                   <Skeleton className="h-4 w-4 rounded" />
-                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-4 w-24" />
                   <Skeleton className="h-2 flex-1 rounded-full" />
-                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-4 w-10" />
                 </div>
               ))}
             </div>
-          ) : (
-            <div className="grid gap-2">
+          ) : serviceStats.length ? (
+            <div className="grid gap-1.5">
               {serviceStats.map((s) => {
                 const max = serviceStats[0]?.alert_count || 1
                 const pct = Math.max(4, Math.round((s.alert_count / max) * 100))
@@ -320,40 +318,34 @@ export function DashboardPage() {
                     key={s.host}
                     type="button"
                     onClick={() => navigate(`/services/${encodeURIComponent(s.host)}`)}
-                    className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-50 dark:hover:bg-slate-700/30"
+                    className="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-50 dark:hover:bg-slate-700/30"
                   >
                     <img
                       src={faviconUrl(s.host)}
                       alt=""
-                      width={16}
-                      height={16}
-                      className="h-4 w-4 flex-shrink-0 rounded-sm object-contain"
+                      width={14}
+                      height={14}
+                      className="h-3.5 w-3.5 flex-shrink-0 rounded-sm object-contain"
                       onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }}
                     />
-                    <span className="w-44 flex-shrink-0 truncate font-mono text-xs text-slate-600 dark:text-slate-300 hover:text-violet-600 dark:hover:text-violet-400" title={s.host}>
+                    <span className="w-28 flex-shrink-0 truncate font-mono text-xs text-slate-600 dark:text-slate-300" title={s.host}>
                       {s.host}
                     </span>
-                    <div className="flex-1 rounded-full bg-slate-100 dark:bg-slate-700/60" style={{ height: 8 }}>
-                      <div
-                        className="h-2 rounded-full bg-violet-500"
-                        style={{ width: `${pct}%`, transition: 'width 0.4s ease' }}
-                      />
+                    <div className="flex-1 rounded-full bg-slate-100 dark:bg-slate-700/60" style={{ height: 6 }}>
+                      <div className="h-1.5 rounded-full bg-violet-500" style={{ width: `${pct}%`, transition: 'width 0.4s ease' }} />
                     </div>
-                    <div className="flex flex-shrink-0 items-center gap-3 text-right">
-                      <span className="w-24 whitespace-nowrap text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-200">
-                        {s.alert_count.toLocaleString()} alerts
-                      </span>
-                      <span className="w-14 whitespace-nowrap text-[10px] tabular-nums text-slate-400">
-                        {s.unique_ips} IPs
-                      </span>
-                    </div>
+                    <span className="w-10 flex-shrink-0 text-right text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+                      {s.alert_count.toLocaleString()}
+                    </span>
                   </button>
                 )
               })}
             </div>
+          ) : (
+            <div className="flex h-[220px] items-center justify-center text-sm text-slate-400">No data yet</div>
           )}
         </div>
-      )}
+      </div>
 
       {/* Alert + Blocked timeline */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
