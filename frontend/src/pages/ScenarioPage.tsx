@@ -10,7 +10,6 @@ import {
 } from 'recharts'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
-import { CountryFlag } from '../components/CountryFlag'
 import { IpBadge } from '../components/IpBadge'
 import { Skeleton, SkeletonCard } from '../components/Skeleton'
 import { faviconUrl } from '../utils/favicon'
