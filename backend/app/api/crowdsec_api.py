@@ -130,29 +130,51 @@ def list_decisions(
 
 
 def _enrich_decisions_with_service(db: Session, decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Add _target_host to each decision by looking up the most common alert target for that IP."""
+    """Add _target_host to each decision.
+
+    Priority:
+    1. stored_decisions.target_host (pre-computed during sync — instant lookup)
+    2. Fallback: GROUP BY query on stored_alerts for IPs that still have NULL
+    """
+    from app.models import StoredAlert, StoredDecision
     from sqlalchemy import func
-    from app.models import StoredAlert
+
     ips = list({str(d.get("value") or d.get("ip") or "") for d in decisions if d.get("value") or d.get("ip")})
     if not ips:
         return decisions
-    # For each IP, find the most common target_host in stored alerts
-    rows = (
-        db.query(StoredAlert.source_ip, StoredAlert.target_host, func.count(StoredAlert.id).label("n"))
-        .filter(StoredAlert.source_ip.in_(ips), StoredAlert.target_host.isnot(None))
-        .group_by(StoredAlert.source_ip, StoredAlert.target_host)
+
+    # Step 1: fast path — read pre-stored target_host from stored_decisions
+    db_rows = (
+        db.query(StoredDecision.ip_value, StoredDecision.target_host)
+        .filter(StoredDecision.ip_value.in_(ips), StoredDecision.target_host.isnot(None))
         .all()
     )
-    # Pick the top host per IP
-    from collections import defaultdict
-    ip_hosts: dict[str, dict[str, int]] = defaultdict(dict)
-    for ip, host, n in rows:
-        ip_hosts[ip][host] = n
-    top_host = {ip: max(hosts, key=hosts.__getitem__) for ip, hosts in ip_hosts.items()}
+    # For IPs with multiple decisions, pick the first non-null (they should agree)
+    ip_to_host: dict[str, str] = {}
+    for ip, host in db_rows:
+        if ip not in ip_to_host and host:
+            ip_to_host[ip] = host
+
+    # Step 2: fallback — compute from alerts for IPs not yet in stored_decisions
+    missing_ips = [ip for ip in ips if ip not in ip_to_host]
+    if missing_ips:
+        rows = (
+            db.query(StoredAlert.source_ip, StoredAlert.target_host, func.count(StoredAlert.id).label("n"))
+            .filter(StoredAlert.source_ip.in_(missing_ips), StoredAlert.target_host.isnot(None))
+            .group_by(StoredAlert.source_ip, StoredAlert.target_host)
+            .all()
+        )
+        from collections import defaultdict
+        ip_hosts: dict[str, dict[str, int]] = defaultdict(dict)
+        for ip, host, n in rows:
+            ip_hosts[ip][host] = n
+        for ip, hosts in ip_hosts.items():
+            ip_to_host[ip] = max(hosts, key=hosts.__getitem__)
+
     for d in decisions:
         ip = str(d.get("value") or d.get("ip") or "")
-        if ip in top_host:
-            d["_target_host"] = top_host[ip]
+        if ip in ip_to_host:
+            d["_target_host"] = ip_to_host[ip]
     return decisions
 
 

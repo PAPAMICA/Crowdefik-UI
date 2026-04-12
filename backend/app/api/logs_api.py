@@ -308,6 +308,118 @@ def access_logs(
     }
 
 
+# ── access log stats ──────────────────────────────────────────────────────────
+
+@router.get("/access/stats")
+def access_log_stats(
+    db: Annotated[Session, Depends(get_db)],
+    _user: Annotated[User, Depends(get_current_user)],
+    lines: int = _DEFAULT_LINES,
+    minutes: int = _DEFAULT_MINUTES,
+    host: str | None = None,
+    search: str | None = None,
+    status: str | None = None,
+    top_n: int = 10,
+) -> dict[str, Any]:
+    """Aggregated statistics from the Traefik access log for chart rendering.
+
+    Returns top hosts, methods, status distribution and top client IPs across
+    the same filtered dataset as GET /access (without pagination).
+    """
+    from collections import Counter
+
+    s = get_settings()
+    log_path = _resolve_path(db, "log_path_access", s.traefik_log_path)
+    if not log_path or not log_path.exists():
+        return {"available": False, "top_hosts": [], "top_methods": [], "status_dist": [], "top_ips": []}
+
+    grep_terms: list[str] = []
+    if search:
+        grep_terms.append(search)
+    if host:
+        grep_terms.append(host)
+
+    raw_lines, _source = _read_log_lines(log_path, None, [], lines, grep_terms)
+
+    search_lc = search.lower() if search else None
+    host_lc = host.lower() if host else None
+    cut = _cutoff(minutes)
+    top_n = max(5, min(top_n, 50))
+
+    hosts_ctr: Counter[str] = Counter()
+    methods_ctr: Counter[str] = Counter()
+    status_ctr: Counter[str] = Counter()
+    ips_ctr: Counter[str] = Counter()
+
+    for line in raw_lines:
+        try:
+            e = _json.loads(line)
+        except _json.JSONDecodeError:
+            continue
+
+        entry_host = (e.get("RequestHost") or "").lower().split(":")[0]
+        code = e.get("DownstreamStatus") or e.get("OriginStatus")
+        method = e.get("RequestMethod", "")
+        path_val = e.get("RequestPath") or e.get("RequestURI", "")
+        client = (e.get("ClientHost") or (e.get("ClientAddr") or "").split(":")[0])
+        time_str = e.get("StartUTC") or e.get("time") or ""
+
+        if cut:
+            dt = _parse_log_time(time_str)
+            if dt and dt < cut:
+                continue
+
+        if host_lc and entry_host != host_lc:
+            continue
+        if status:
+            cat = str(code)[0] + "xx" if code else ""
+            if status != cat and str(code) != status:
+                continue
+        if search_lc:
+            haystack = f"{entry_host} {path_val} {client} {method} {code}".lower()
+            if search_lc not in haystack:
+                continue
+
+        if entry_host:
+            hosts_ctr[entry_host] += 1
+        if method:
+            methods_ctr[method.upper()] += 1
+        if client:
+            ips_ctr[client] += 1
+        if code:
+            cat = f"{str(code)[0]}xx" if str(code) and str(code)[0].isdigit() else "other"
+            status_ctr[cat] += 1
+
+    # Attach country codes to top IPs from geo cache (batch)
+    top_ip_list = [ip for ip, _ in ips_ctr.most_common(top_n)]
+    geo_rows = (
+        db.query(IpGeoCache.ip, IpGeoCache.country_code, IpGeoCache.abuse_score)
+        .filter(IpGeoCache.ip.in_(top_ip_list))
+        .all()
+    ) if top_ip_list else []
+    geo_map = {r.ip: (r.country_code, r.abuse_score) for r in geo_rows}
+
+    return {
+        "available": True,
+        "total_entries": sum(hosts_ctr.values()),
+        "top_hosts": [{"host": h, "count": c} for h, c in hosts_ctr.most_common(top_n)],
+        "top_methods": [{"method": m, "count": c} for m, c in methods_ctr.most_common()],
+        "status_dist": [
+            {"status": s, "count": c}
+            for s, c in sorted(status_ctr.items())
+        ],
+        "top_ips": [
+            {
+                "ip": ip,
+                "count": ips_ctr[ip],
+                "country_code": geo_map.get(ip, (None, None))[0],
+                "abuse_score": geo_map.get(ip, (None, None))[1],
+            }
+            for ip in top_ip_list
+        ],
+    }
+
+
 # ── generic structured-log parser & filter ────────────────────────────────────
 
 _LOG_RE = re.compile(

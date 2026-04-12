@@ -1,6 +1,10 @@
 import { Download, Filter, RefreshCw, Search, Server } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
+import {
+  Bar, BarChart, CartesianGrid, Cell,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { CountryFlag } from '../components/CountryFlag'
@@ -15,6 +19,14 @@ type Entry = {
   country_code: string | null; abuse_score: number | null
 }
 type Data = { available: boolean; total: number; page: number; pages: number; lines: number; entries: Entry[] }
+type Stats = {
+  available: boolean
+  total_entries: number
+  top_hosts: ({ host: string; count: number })[]
+  top_methods: ({ method: string; count: number })[]
+  status_dist: ({ status: string; count: number })[]
+  top_ips: ({ ip: string; count: number; country_code: string | null })[]
+}
 
 const PAGE_SIZE = 200
 
@@ -40,10 +52,16 @@ function statusColor(code: number | null) {
   return 'text-red-600 dark:text-red-400'
 }
 
+const STATUS_COLORS: Record<string, string> = {
+  '2xx': '#22c55e', '3xx': '#3b82f6', '4xx': '#f59e0b', '5xx': '#ef4444', 'other': '#94a3b8',
+}
+
 export function LogsAccessPage() {
   const { me, loading } = useAuth()
   const [data, setData] = useState<Data | null>(null)
+  const [stats, setStats] = useState<Stats | null>(null)
   const [fetching, setFetching] = useState(true)
+  const [fetchingStats, setFetchingStats] = useState(false)
   usePagePerf('Logs / Access', fetching)
   const [lines, setLines] = useState(1_000)
   const [page, setPage] = useState(1)
@@ -68,6 +86,14 @@ export function LogsAccessPage() {
     return p
   }, [page, debouncedSearch, hostFilter, statusFilter, lines])
 
+  const buildStatsParams = useCallback(() => {
+    const p = new URLSearchParams({ lines: String(lines) })
+    if (debouncedSearch) p.set('search', debouncedSearch)
+    if (hostFilter) p.set('host', hostFilter)
+    if (statusFilter) p.set('status', statusFilter)
+    return p
+  }, [debouncedSearch, hostFilter, statusFilter, lines])
+
   async function load() {
     setFetching(true)
     try {
@@ -76,7 +102,17 @@ export function LogsAccessPage() {
     } finally { setFetching(false) }
   }
 
+  async function loadStats() {
+    setFetchingStats(true)
+    try {
+      const r = await apiFetch(`/api/logs/access/stats?${buildStatsParams()}`)
+      if (r.ok) setStats(await r.json() as Stats)
+    } finally { setFetchingStats(false) }
+  }
+
   useEffect(() => { void load() }, [page, debouncedSearch, hostFilter, statusFilter, lines]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Stats refresh on filter change (not on page change — they cover the full filtered set)
+  useEffect(() => { void loadStats() }, [debouncedSearch, hostFilter, statusFilter, lines]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function exportCSV() {
     if (!data?.entries) return
@@ -141,6 +177,102 @@ export function LogsAccessPage() {
           </select>
         </div>
       </div>
+
+      {/* Distribution charts */}
+      {(stats?.available !== false) && (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {/* Top Hosts */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
+            <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Top Hosts</div>
+            {fetchingStats ? <Skeleton className="h-[120px] w-full" /> : (stats?.top_hosts?.length ?? 0) > 0 ? (
+              <ResponsiveContainer width="100%" height={120}>
+                <BarChart data={stats!.top_hosts.slice(0, 6).map(h => ({ name: h.host.replace(/^www\./, ''), count: h.count }))}
+                  layout="vertical" margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
+                  <XAxis type="number" hide />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={80} />
+                  <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
+                    formatter={(v: number) => [v, 'Requests']} />
+                  <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14}>
+                    {stats!.top_hosts.slice(0, 6).map((_, idx) => <Cell key={idx} fill={`hsl(${250 + idx * 20}, 65%, 55%)`} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-[120px] items-center justify-center text-xs text-slate-400">No data</div>
+            )}
+          </div>
+
+          {/* Methods */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
+            <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Methods</div>
+            {fetchingStats ? <Skeleton className="h-[120px] w-full" /> : (stats?.top_methods?.length ?? 0) > 0 ? (
+              <ResponsiveContainer width="100%" height={120}>
+                <BarChart data={stats!.top_methods} layout="vertical" margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
+                  <XAxis type="number" hide />
+                  <YAxis type="category" dataKey="method" tick={{ fontSize: 9, fill: '#94a3b8', fontFamily: 'monospace' }} axisLine={false} tickLine={false} width={40} />
+                  <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
+                    formatter={(v: number) => [v, 'Requests']} />
+                  <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14} fill="#6366f1" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-[120px] items-center justify-center text-xs text-slate-400">No data</div>
+            )}
+          </div>
+
+          {/* Status codes */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
+            <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Status codes</div>
+            {fetchingStats ? <Skeleton className="h-[120px] w-full" /> : (stats?.status_dist?.length ?? 0) > 0 ? (
+              <>
+                <ResponsiveContainer width="100%" height={80}>
+                  <BarChart data={stats!.status_dist} margin={{ left: 0, right: 0, top: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.1)" vertical={false} />
+                    <XAxis dataKey="status" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                    <YAxis hide />
+                    <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
+                      formatter={(v: number) => [v, 'Requests']} />
+                    <Bar dataKey="count" radius={[3, 3, 0, 0]} maxBarSize={30}>
+                      {stats!.status_dist.map((s) => <Cell key={s.status} fill={STATUS_COLORS[s.status] ?? '#94a3b8'} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {stats!.status_dist.map((s) => (
+                    <span key={s.status} className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                      <span className="h-2 w-2 rounded-full" style={{ background: STATUS_COLORS[s.status] ?? '#94a3b8' }} />
+                      {s.status}: {s.count.toLocaleString()}
+                    </span>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="flex h-[120px] items-center justify-center text-xs text-slate-400">No data</div>
+            )}
+          </div>
+
+          {/* Top Client IPs */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
+            <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Top Client IPs</div>
+            {fetchingStats ? <Skeleton className="h-[120px] w-full" /> : (stats?.top_ips?.length ?? 0) > 0 ? (
+              <ResponsiveContainer width="100%" height={120}>
+                <BarChart data={stats!.top_ips.slice(0, 6).map(i => ({ ip: i.ip, count: i.count }))}
+                  layout="vertical" margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
+                  <XAxis type="number" hide />
+                  <YAxis type="category" dataKey="ip" tick={{ fontSize: 8, fill: '#94a3b8', fontFamily: 'monospace' }} axisLine={false} tickLine={false} width={90} />
+                  <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, fontSize: 10 }}
+                    formatter={(v: number) => [v, 'Requests']} />
+                  <Bar dataKey="count" radius={[0, 3, 3, 0]} maxBarSize={14}>
+                    {stats!.top_ips.slice(0, 6).map((_, idx) => <Cell key={idx} fill={`hsl(${10 + idx * 20}, 70%, 55%)`} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-[120px] items-center justify-center text-xs text-slate-400">No data</div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700/50 dark:bg-slate-800/60">
         {data?.available === false ? (

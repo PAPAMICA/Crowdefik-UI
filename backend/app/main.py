@@ -144,15 +144,21 @@ _MIGRATIONS: list[tuple[str, str]] = [
         "SELECT host FROM service_policies LIMIT 1",
         "CREATE TABLE IF NOT EXISTS service_policies (host VARCHAR(256) PRIMARY KEY, min_events_to_display INTEGER NOT NULL DEFAULT 1, auto_ban_enabled BOOLEAN NOT NULL DEFAULT 0, auto_ban_min_score INTEGER, auto_ban_min_events INTEGER, auto_ban_window_hours INTEGER NOT NULL DEFAULT 24, auto_ban_duration VARCHAR(64) NOT NULL DEFAULT '24h', muted_scenarios TEXT, notes TEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     ),
+    # target_host on decisions (populated by sync for fast lookup without JOIN)
+    (
+        "SELECT target_host FROM stored_decisions LIMIT 1",
+        "ALTER TABLE stored_decisions ADD COLUMN target_host VARCHAR(256)",
+    ),
 ]
 
 
 # Idempotent SQL statements that are always safe to run (CREATE INDEX IF NOT EXISTS, etc.)
 # These are executed unconditionally — they must use IF NOT EXISTS or equivalent guards.
 _IDEMPOTENT_SQL: list[str] = [
-    "CREATE INDEX IF NOT EXISTS ix_alert_host_synced ON stored_alerts (target_host, synced_at)",
-    "CREATE INDEX IF NOT EXISTS ix_alert_ip_start    ON stored_alerts (source_ip, start_at)",
-    "CREATE INDEX IF NOT EXISTS ix_decision_ip_until ON stored_decisions (ip_value, until)",
+    "CREATE INDEX IF NOT EXISTS ix_alert_host_synced    ON stored_alerts    (target_host, synced_at)",
+    "CREATE INDEX IF NOT EXISTS ix_alert_ip_start       ON stored_alerts    (source_ip, start_at)",
+    "CREATE INDEX IF NOT EXISTS ix_decision_ip_until    ON stored_decisions (ip_value, until)",
+    "CREATE INDEX IF NOT EXISTS ix_decision_target_host ON stored_decisions (target_host)",
 ]
 
 

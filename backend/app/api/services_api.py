@@ -237,60 +237,101 @@ def service_overview(
 @router.get("/{host}/logs")
 def service_logs(
     host: str,
-    _db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
+    lines: int = 1000,
     limit: int = 200,
+    page: int = 1,
+    search: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     """
     Recent Traefik access.log entries for a given virtual host.
 
-    Requires CROWDEFIK_TRAEFIK_LOG_PATH to be configured and the log file
-    to be mounted inside the container.  Returns an empty list gracefully
-    if logs are not available.
+    Delegates to the same log-reading pipeline as GET /api/logs/access, ensuring
+    consistent path resolution (DB setting > env var > Docker exec fallback) and
+    geo/abuse enrichment.  Returns paginated results so the frontend can load more
+    entries without re-fetching everything.
     """
     host = _require_host(host)
-    _ensure_host_visible(host, _db, user)
+    _ensure_host_visible(host, db, user)
+
+    # Re-use the logs_api helpers directly to avoid code duplication
+    from app.api.logs_api import (
+        _resolve_path, _get_container_name, _read_log_lines, _attach_geo
+    )
+    import json as _json
+
+    s = get_settings()
+    log_path = _resolve_path(db, "log_path_access", s.traefik_log_path)
+    container = _get_container_name(db, "traefik_container_name", "traefik")
+    container_paths = [
+        "/var/log/traefik/access.log",
+        "/var/log/access.log",
+    ]
+
+    lines = max(100, min(lines, 50_000))
     limit = max(1, min(limit, 1000))
 
-    log_path = get_settings().traefik_log_path
-    if not log_path or not log_path.exists():
-        return {"host": host, "available": False, "entries": []}
+    # Use host as pre-filter grep term (fast on large files / docker)
+    grep_terms = [host]
+    if search:
+        grep_terms.append(search)
 
-    try:
-        from app.integrations.traefik_log_reader import _tail_file
-        import json as _json
+    raw_lines, source = _read_log_lines(log_path, container, container_paths, lines, grep_terms)
 
-        raw_lines = _tail_file(log_path, 100_000)
-        entries = []
-        for line in reversed(raw_lines):
-            if len(entries) >= limit:
-                break
-            try:
-                entry = _json.loads(line)
-            except _json.JSONDecodeError:
+    if not raw_lines:
+        return {"host": host, "available": False, "entries": [], "total": 0, "source": source}
+
+    search_lc = search.lower() if search else None
+    entries: list[dict[str, Any]] = []
+    for line in reversed(raw_lines):
+        try:
+            entry = _json.loads(line)
+        except _json.JSONDecodeError:
+            continue
+        entry_host = (entry.get("RequestHost") or entry.get("RequestAddr") or "").lower().split(":")[0].strip()
+        if entry_host != host:
+            continue
+        code = entry.get("DownstreamStatus") or entry.get("OriginStatus")
+        method = entry.get("RequestMethod", "")
+        path_val = entry.get("RequestPath") or entry.get("RequestURI", "")
+        client = entry.get("ClientHost") or (entry.get("ClientAddr") or "").split(":")[0]
+
+        if status:
+            cat = str(code)[0] + "xx" if code else ""
+            if status != cat and str(code) != status:
                 continue
-            # Strip optional port (e.g. "example.com:443" → "example.com")
-            entry_host = (entry.get("RequestHost") or entry.get("RequestAddr") or "").lower().split(":")[0].strip()
-            if entry_host != host:
+        if search_lc:
+            haystack = f"{path_val} {client} {method} {code}".lower()
+            if search_lc not in haystack:
                 continue
-            entries.append({
-                "time": entry.get("StartUTC") or entry.get("time"),
-                "method": entry.get("RequestMethod"),
-                "path": entry.get("RequestPath") or entry.get("RequestURI"),
-                "status": entry.get("DownstreamStatus") or entry.get("OriginStatus"),
-                "client_ip": entry.get("ClientHost") or (entry.get("ClientAddr") or "").split(":")[0],
-                "duration_ms": round((entry.get("Duration") or 0) / 1_000_000, 1),
-                "router": entry.get("RouterName"),
-                "service": entry.get("ServiceName"),
-                "tls_version": entry.get("TLSVersion"),
-                "bytes": entry.get("DownstreamContentSize"),
-            })
 
-        return {"host": host, "available": True, "entries": entries}
+        entries.append({
+            "time": entry.get("StartUTC") or entry.get("time"),
+            "method": method,
+            "path": path_val,
+            "status": code,
+            "client_ip": client,
+            "duration_ms": round((entry.get("Duration") or 0) / 1_000_000, 1),
+            "router": entry.get("RouterName"),
+            "service": entry.get("ServiceName"),
+            "tls_version": entry.get("TLSVersion"),
+            "bytes": entry.get("DownstreamContentSize"),
+        })
 
-    except Exception as exc:
-        log.warning("Failed to read Traefik logs for host %s: %s", host, exc)
-        return {"host": host, "available": False, "entries": []}
+    total = len(entries)
+    paged = entries[(page - 1) * limit: page * limit]
+    _attach_geo(db, paged)
+    return {
+        "host": host,
+        "available": True,
+        "total": total,
+        "page": page,
+        "pages": -(-total // limit),
+        "source": source,
+        "entries": paged,
+    }
 
 
 # ── Service policy ─────────────────────────────────────────────────────────────

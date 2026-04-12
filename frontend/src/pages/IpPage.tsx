@@ -2,11 +2,11 @@ import {
   AlertTriangle, ArrowLeft, Ban, Clock, Globe,
   RefreshCw, Shield, ShieldBan, ShieldCheck, Trash2,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import {
-  Area, AreaChart, CartesianGrid, ResponsiveContainer,
-  Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
@@ -85,6 +85,7 @@ export function IpPage() {
   const [info, setInfo] = useState<IpInfo | null>(null)
   const [timeline, setTimeline] = useState<TimelinePoint[]>([])
   const [alertsData, setAlertsData] = useState<AlertsData | null>(null)
+  const [allAlerts, setAllAlerts] = useState<IpAlert[]>([])
   const [decisions, setDecisions] = useState<IpDecision[]>([])
   const [alertPage, setAlertPage] = useState(1)
 
@@ -96,6 +97,11 @@ export function IpPage() {
   const [unbanModal, setUnbanModal] = useState<number | null>(null)
   const [banDuration, setBanDuration] = useState('24h')
   const [banReason, setBanReason] = useState('manual')
+
+  useEffect(() => {
+    setAllAlerts([])
+    setAlertPage(1)
+  }, [ip])
 
   useEffect(() => {
     if (!ip) return
@@ -117,7 +123,17 @@ export function IpPage() {
     if (!ip) return
     setLoadingAlerts(true)
     void apiFetch(`/api/ip/${encodeURIComponent(ip)}/alerts?page=${alertPage}&limit=25`)
-      .then(async (r) => { if (r.ok) setAlertsData(await r.json() as AlertsData) })
+      .then(async (r) => {
+        if (r.ok) {
+          const data = await r.json() as AlertsData
+          setAlertsData(data)
+          // Accumulate alerts from all pages for service distribution chart
+          setAllAlerts((prev) => {
+            const ids = new Set(prev.map((a) => a.id))
+            return [...prev, ...data.alerts.filter((a) => !ids.has(a.id))]
+          })
+        }
+      })
       .finally(() => setLoadingAlerts(false))
   }, [ip, alertPage])
 
@@ -270,6 +286,44 @@ export function IpPage() {
           )}
         </div>
       </div>
+
+      {/* Service distribution — computed from loaded alerts */}
+      {(() => {
+        const dist = Object.entries(
+          allAlerts.reduce<Record<string, number>>((acc, a) => {
+            if (a.target_host) acc[a.target_host] = (acc[a.target_host] ?? 0) + (a.events_count || 1)
+            return acc
+          }, {})
+        )
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+        if (!dist.length) return null
+        return (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+            <div className="mb-4 flex items-center gap-2">
+              <Globe className="h-4 w-4 text-violet-500" />
+              <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Attacks by service</span>
+              <span className="text-xs text-slate-400">— based on {allAlerts.length} loaded alerts</span>
+            </div>
+            <ResponsiveContainer width="100%" height={Math.max(80, dist.length * 28)}>
+              <BarChart data={dist.map(([host, count]) => ({ host, count }))} layout="vertical"
+                margin={{ left: 8, right: 24, top: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="host" tick={{ fontSize: 10, fill: '#94a3b8', fontFamily: 'monospace' }}
+                  axisLine={false} tickLine={false} width={130} />
+                <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+                  formatter={(v: number) => [v, 'Events']} />
+                <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={18}>
+                  {dist.map((_, idx) => (
+                    <Cell key={idx} fill={`hsl(${250 + idx * 25}, 65%, 55%)`} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )
+      })()}
 
       {/* Attack timeline */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">

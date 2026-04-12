@@ -5,7 +5,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  Area, AreaChart, CartesianGrid, Cell, Pie, PieChart,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { apiFetch } from '../api'
@@ -57,7 +57,11 @@ type LogEntry = {
   tls_version: string | null; bytes: number | null
 }
 
-type LogsData = { host: string; available: boolean; entries: LogEntry[] }
+type LogsData = {
+  host: string; available: boolean
+  entries: LogEntry[]; total: number
+  page: number; pages: number; source?: string
+}
 
 type Policy = {
   host: string
@@ -335,7 +339,7 @@ export function ServicePage() {
     if (!host) return
     setLoadingLogs(true)
     try {
-      const r = await apiFetch(`/api/services/${encodeURIComponent(host)}/logs?limit=500`)
+      const r = await apiFetch(`/api/services/${encodeURIComponent(host)}/logs?lines=2000&limit=500`)
       if (r.ok) setLogsData(await r.json() as LogsData)
     } finally {
       setLoadingLogs(false)
@@ -576,6 +580,38 @@ export function ServicePage() {
           </p>
         )}
       </Section>
+
+      {/* Top IPs distribution chart */}
+      {!loadingOverview && (overview?.top_ips?.length ?? 0) > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+          <div className="mb-4 flex items-center gap-2">
+            <Globe className="h-4 w-4 text-red-500" />
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Attack distribution by IP</span>
+            <span className="text-xs text-slate-400">— top {overview!.top_ips.length} attackers</span>
+          </div>
+          <ResponsiveContainer width="100%" height={Math.max(120, overview!.top_ips.length * 28)}>
+            <BarChart
+              data={overview!.top_ips.map(ip => ({ ip: ip.ip, count: ip.count }))}
+              layout="vertical"
+              margin={{ left: 8, right: 24, top: 0, bottom: 0 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}
+                tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)} />
+              <YAxis type="category" dataKey="ip" tick={{ fontSize: 10, fill: '#94a3b8', fontFamily: 'monospace' }}
+                axisLine={false} tickLine={false} width={110} />
+              <Tooltip
+                contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+                formatter={(v: number) => [v, 'Alerts']} />
+              <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={20}>
+                {overview!.top_ips.map((_, idx) => (
+                  <Cell key={idx} fill={`hsl(${(idx * 37) % 360}, 70%, 55%)`} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Recent alerts */}
       <Section title="Recent alerts" icon={AlertTriangle} iconColor="text-amber-500">

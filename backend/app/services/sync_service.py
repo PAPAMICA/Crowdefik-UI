@@ -185,6 +185,30 @@ def sync_alerts(db: Session, alerts: list[dict]) -> int:
     return inserted
 
 
+def _top_host_for_ips(db: Session, ips: list[str]) -> dict[str, str]:
+    """Return {ip: most_common_target_host} for a list of IPs (single query)."""
+    from sqlalchemy import func
+    from collections import defaultdict as _dd
+
+    if not ips:
+        return {}
+    rows = (
+        db.query(StoredAlert.source_ip, StoredAlert.target_host, func.count(StoredAlert.id).label("n"))
+        .filter(StoredAlert.source_ip.in_(ips), StoredAlert.target_host.isnot(None))
+        .group_by(StoredAlert.source_ip, StoredAlert.target_host)
+        .all()
+    )
+    ip_host_counts: dict[str, list[tuple[str, int]]] = _dd(list)
+    for ip, host, n in rows:
+        ip_host_counts[ip].append((host, n))
+
+    result: dict[str, str] = {}
+    for ip, host_counts in ip_host_counts.items():
+        top_host = max(host_counts, key=lambda x: x[1])[0]
+        result[ip] = top_host
+    return result
+
+
 def sync_decisions(db: Session, decisions: list[dict]) -> int:
     if not decisions:
         return 0
@@ -196,21 +220,23 @@ def sync_decisions(db: Session, decisions: list[dict]) -> int:
         r[0] for r in db.query(StoredDecision.id).filter(StoredDecision.id.in_(incoming_ids)).all()
     }
 
+    # Collect IPs for the new decisions so we can look up their target host in one batch
+    new_decisions = [d for d in decisions if isinstance(d.get("id"), int) and d["id"] not in existing_ids]
+    new_ips = list({str(d.get("value") or d.get("ip") or "") for d in new_decisions if d.get("value") or d.get("ip")})
+    ip_to_host = _top_host_for_ips(db, new_ips) if new_ips else {}
+
     inserted = 0
-    for d in decisions:
-        decision_id = d.get("id")
-        if not isinstance(decision_id, int):
-            continue
-        if decision_id in existing_ids:
-            continue
+    for d in new_decisions:
+        ip = str(d.get("value") or d.get("ip") or "")
         row = StoredDecision(
-            id=decision_id,
-            ip_value=str(d.get("value") or d.get("ip") or ""),
+            id=d["id"],
+            ip_value=ip,
             decision_type=str(d.get("type") or ""),
             scope=str(d.get("scope") or ""),
             scenario=str(d.get("scenario") or ""),
             duration_str=str(d.get("duration") or ""),
             until=_parse_dt(d.get("until")),
+            target_host=ip_to_host.get(ip),
             raw_json=json.dumps(d),
             synced_at=now,
         )
@@ -219,6 +245,34 @@ def sync_decisions(db: Session, decisions: list[dict]) -> int:
     if inserted:
         db.commit()
     return inserted
+
+
+def backfill_decisions_target_host(db: Session) -> int:
+    """Populate target_host on StoredDecision rows that still have NULL.
+
+    Called during run_full_sync so decisions imported before this column existed
+    get enriched automatically without requiring manual intervention.
+    """
+    rows = db.query(StoredDecision).filter(StoredDecision.target_host.is_(None)).all()
+    if not rows:
+        return 0
+
+    ips = list({r.ip_value for r in rows if r.ip_value})
+    ip_to_host = _top_host_for_ips(db, ips) if ips else {}
+    if not ip_to_host:
+        return 0
+
+    updated = 0
+    for row in rows:
+        host = ip_to_host.get(row.ip_value)
+        if host:
+            row.target_host = host
+            updated += 1
+
+    if updated:
+        db.commit()
+        log.info("Backfilled target_host for %d decisions", updated)
+    return updated
 
 
 def enrich_geo(db: Session, batch_size: int = 50) -> int:
@@ -746,6 +800,9 @@ def run_full_sync(db: Session) -> dict:
     # so the upcoming backfill gets a fresh chance (handles late log config).
     _re_enrich_recent_unenriched(db)
     host_enriched = backfill_target_hosts(db)
+
+    # Backfill target_host on decisions (fast: single GROUP BY query per batch)
+    backfill_decisions_target_host(db)
 
     cleaned = cleanup_old(db)
     auto_bans = _apply_service_policies(db)

@@ -100,6 +100,8 @@ class StoredDecision(Base):
     scenario = mapped_column(String(512), nullable=True)
     duration_str = mapped_column(String(64), nullable=True)
     until = mapped_column(DateTime, nullable=True)
+    # Target service — most common alert host for this IP; set during sync
+    target_host = mapped_column(String(256), nullable=True, index=True)
     raw_json = mapped_column(Text, nullable=False)
     synced_at = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
