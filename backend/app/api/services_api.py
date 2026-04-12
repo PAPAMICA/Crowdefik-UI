@@ -11,12 +11,14 @@ from datetime import datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.audit import log_action
 from app.db import get_db
-from app.models import IpGeoCache, StoredAlert, StoredDecision, User
+from app.models import IpGeoCache, ServicePolicy, StoredAlert, StoredDecision, User
 from app.settings import get_settings
 
 router = APIRouter(prefix="/services", tags=["services"])
@@ -263,3 +265,87 @@ def service_logs(
     except Exception as exc:
         log.warning("Failed to read Traefik logs for host %s: %s", host, exc)
         return {"host": host, "available": False, "entries": []}
+
+
+# ── Service policy ─────────────────────────────────────────────────────────────
+
+class ServicePolicyIn(BaseModel):
+    min_events_to_display: int = 1
+    auto_ban_enabled: bool = False
+    auto_ban_min_score: int | None = None
+    auto_ban_min_events: int | None = None
+    auto_ban_window_hours: int = 24
+    auto_ban_duration: str = "24h"
+    muted_scenarios: list[str] | None = None
+    notes: str | None = None
+
+
+def _policy_to_dict(p: ServicePolicy) -> dict[str, Any]:
+    import json as _j
+    muted = []
+    if p.muted_scenarios:
+        try:
+            muted = _j.loads(p.muted_scenarios)
+        except Exception:
+            pass
+    return {
+        "host": p.host,
+        "min_events_to_display": p.min_events_to_display,
+        "auto_ban_enabled": p.auto_ban_enabled,
+        "auto_ban_min_score": p.auto_ban_min_score,
+        "auto_ban_min_events": p.auto_ban_min_events,
+        "auto_ban_window_hours": p.auto_ban_window_hours,
+        "auto_ban_duration": p.auto_ban_duration,
+        "muted_scenarios": muted,
+        "notes": p.notes,
+        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+    }
+
+
+@router.get("/{host}/policy")
+def get_service_policy(
+    host: str,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Get (or auto-create) the security policy for a service."""
+    host = _require_host(host)
+    p = db.get(ServicePolicy, host)
+    if not p:
+        p = ServicePolicy(host=host, updated_at=datetime.utcnow())
+        db.add(p)
+        db.commit()
+        db.refresh(p)
+    return _policy_to_dict(p)
+
+
+@router.put("/{host}/policy")
+def update_service_policy(
+    host: str,
+    body: ServicePolicyIn,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Update the security policy for a service (superuser only)."""
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Superuser required")
+    import json as _j
+    host = _require_host(host)
+    p = db.get(ServicePolicy, host)
+    if not p:
+        p = ServicePolicy(host=host)
+        db.add(p)
+
+    p.min_events_to_display = max(1, body.min_events_to_display)
+    p.auto_ban_enabled = body.auto_ban_enabled
+    p.auto_ban_min_score = body.auto_ban_min_score
+    p.auto_ban_min_events = body.auto_ban_min_events
+    p.auto_ban_window_hours = max(1, body.auto_ban_window_hours)
+    p.auto_ban_duration = body.auto_ban_duration or "24h"
+    p.muted_scenarios = _j.dumps(body.muted_scenarios or [])
+    p.notes = body.notes
+    p.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(p)
+    log_action(db, user, "policy_update", target=host)
+    return _policy_to_dict(p)

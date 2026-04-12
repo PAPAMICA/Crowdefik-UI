@@ -10,8 +10,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.api.allowlist_api import get_allowlisted_ips, is_ip_allowlisted
 from app.integrations import crowdsec_client, ipgeo_client
-from app.models import IpGeoCache, StoredAlert, StoredDecision
+from app.models import Allowlist, IpGeoCache, ServicePolicy, StoredAlert, StoredDecision
 
 log = logging.getLogger(__name__)
 
@@ -372,6 +373,83 @@ def _warm_traefik_cache(db: Session) -> None:
         log.debug("Traefik cache warm skipped: %s", exc)
 
 
+def _apply_service_policies(db: Session) -> int:
+    """
+    For each service that has auto_ban_enabled=True, find IPs that exceeded the
+    configured thresholds and issue a ban if not already decided and not allowlisted.
+    Returns the number of new bans issued.
+    """
+    import json as _json
+    policies = db.query(ServicePolicy).filter(ServicePolicy.auto_ban_enabled == True).all()  # noqa: E712
+    if not policies:
+        return 0
+
+    allowlisted = get_allowlisted_ips(db)
+    bans_issued = 0
+
+    for policy in policies:
+        window_start = datetime.utcnow() - timedelta(hours=policy.auto_ban_window_hours)
+        muted = set()
+        if policy.muted_scenarios:
+            try:
+                muted = set(_json.loads(policy.muted_scenarios))
+            except Exception:
+                pass
+
+        # Collect alert counts per IP within window for this service
+        alerts_q = (
+            db.query(StoredAlert.source_ip, StoredAlert.scenario)
+            .filter(
+                StoredAlert.target_host == policy.host,
+                StoredAlert.start_at >= window_start,
+                StoredAlert.source_ip != None,  # noqa: E711
+            )
+            .all()
+        )
+
+        ip_counts: dict[str, int] = {}
+        for ip, scenario in alerts_q:
+            if scenario in muted:
+                continue
+            ip_counts[ip] = ip_counts.get(ip, 0) + 1
+
+        for ip, count in ip_counts.items():
+            if ip in allowlisted:
+                continue
+
+            # Check event threshold
+            if policy.auto_ban_min_events and count < policy.auto_ban_min_events:
+                continue
+
+            # Check abuse score threshold (from cache)
+            if policy.auto_ban_min_score:
+                from app.models import IpGeoCache
+                geo = db.get(IpGeoCache, ip)
+                if geo and geo.abuse_score is not None and geo.abuse_score < policy.auto_ban_min_score:
+                    continue
+
+            # Skip if already has an active decision
+            existing = db.query(StoredDecision).filter(StoredDecision.ip_value == ip).first()
+            if existing:
+                continue
+
+            # Issue the ban
+            result = crowdsec_client.add_decision(
+                db, ip=ip,
+                duration=policy.auto_ban_duration,
+                reason=f"auto-ban:{policy.host}",
+                decision_type="ban",
+            )
+            if result.get("ok"):
+                bans_issued += 1
+                log.info("Auto-ban triggered: ip=%s host=%s events=%d duration=%s",
+                         ip, policy.host, count, policy.auto_ban_duration)
+            else:
+                log.warning("Auto-ban failed for %s: %s", ip, result.get("error"))
+
+    return bans_issued
+
+
 def run_full_sync(db: Session) -> dict:
     """Fetch from CrowdSec, store in DB, enrich geo, cleanup old. Safe to call repeatedly."""
     alerts_raw = crowdsec_client.fetch_alerts_sync(db)
@@ -382,16 +460,18 @@ def run_full_sync(db: Session) -> dict:
     geo_enriched = enrich_geo(db)
     backfill_target_hosts(db)
     cleaned = cleanup_old(db)
+    auto_bans = _apply_service_policies(db)
 
     # Keep the Traefik router cache hot so dashboard endpoints never have to
     # wait for a live Traefik API call when serving user requests.
     _warm_traefik_cache(db)
 
-    log.info("Sync done: +%d alerts, +%d decisions, %d IPs geolocated, %d old rows removed",
-             new_alerts, new_decisions, geo_enriched, cleaned)
+    log.info("Sync done: +%d alerts, +%d decisions, %d IPs geolocated, %d old rows removed, %d auto-bans",
+             new_alerts, new_decisions, geo_enriched, cleaned, auto_bans)
     return {
         "new_alerts": new_alerts,
         "new_decisions": new_decisions,
         "geo_enriched": geo_enriched,
         "cleaned": cleaned,
+        "auto_bans": auto_bans,
     }

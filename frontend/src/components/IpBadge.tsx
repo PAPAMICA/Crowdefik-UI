@@ -1,7 +1,32 @@
-import { AlertTriangle, Globe, Info, X } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Globe, Info, ShieldCheck, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { CountryFlag } from './CountryFlag'
+
+// ── Allowlist cache ───────────────────────────────────────────
+const allowlistCache = new Map<string, boolean>()
+const allowlistPending = new Map<string, Promise<boolean>>()
+
+async function fetchIsAllowlisted(ip: string): Promise<boolean> {
+  if (allowlistCache.has(ip)) return allowlistCache.get(ip)!
+  if (!allowlistPending.has(ip)) {
+    const p = apiFetch('/api/crowdsec/allowlist/check', {
+      method: 'POST',
+      body: JSON.stringify({ ip }),
+    })
+      .then(async (r) => {
+        if (!r.ok) return false
+        const d = await r.json() as { protected: boolean }
+        allowlistCache.set(ip, d.protected)
+        return d.protected
+      })
+      .catch(() => false)
+      .finally(() => allowlistPending.delete(ip))
+    allowlistPending.set(ip, p)
+  }
+  return allowlistPending.get(ip)!
+}
 
 type GeoData = {
   country?: string; countryCode?: string; city?: string; regionName?: string
@@ -37,7 +62,13 @@ function Modal({ info, onClose }: { info: IpInfo; onClose: () => void }) {
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
           <div className="flex items-center gap-2">
             <Globe className="h-4 w-4 text-violet-500" />
-            <span className="font-mono text-sm font-medium">{info.ip}</span>
+            <Link
+              to={`/ip/${encodeURIComponent(info.ip)}`}
+              onClick={onClose}
+              className="font-mono text-sm font-medium hover:text-violet-600 dark:hover:text-violet-400"
+            >
+              {info.ip}
+            </Link>
             {cc && <CountryFlag code={cc} size={20} />}
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
@@ -99,6 +130,16 @@ function Modal({ info, onClose }: { info: IpInfo; onClose: () => void }) {
               </div>
             </div>
           )}
+
+          {/* Full details link */}
+          <Link
+            to={`/ip/${encodeURIComponent(info.ip)}`}
+            onClick={onClose}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-violet-500/30 bg-violet-500/10 py-2 text-xs font-medium text-violet-700 hover:bg-violet-500/15 dark:text-violet-400"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            View full IP details
+          </Link>
         </div>
       </div>
     </div>
@@ -141,17 +182,18 @@ async function fetchIpInfo(ip: string): Promise<IpInfo | null> {
 export function IpBadge({ ip }: { ip: string }) {
   const [open, setOpen] = useState(false)
   const [info, setInfo] = useState<IpInfo | null>(() => cache.get(ip) ?? null)
+  const [protected_, setProtected] = useState<boolean>(() => allowlistCache.get(ip) ?? false)
   const [hovered, setHovered] = useState(false)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Lazy fetch — only triggered on first hover to avoid mass requests on mount
   useEffect(() => {
-    if (!hovered || info) return
-    void fetchIpInfo(ip).then((d) => { if (d) setInfo(d) })
+    if (!hovered) return
+    if (!info) void fetchIpInfo(ip).then((d) => { if (d) setInfo(d) })
+    if (!allowlistCache.has(ip)) void fetchIsAllowlisted(ip).then(setProtected)
   }, [hovered, ip, info])
 
   function handleMouseEnter() {
-    if (info) return
     hoverTimer.current = setTimeout(() => setHovered(true), 150)
   }
   function handleMouseLeave() {
@@ -173,6 +215,11 @@ export function IpBadge({ ip }: { ip: string }) {
       >
         {cc && <CountryFlag code={cc} size={16} />}
         <span>{ip}</span>
+        {protected_ && (
+          <span title="On allowlist — will not be auto-banned">
+            <ShieldCheck className="h-3 w-3 text-emerald-500" />
+          </span>
+        )}
         {score !== null && (
           <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold leading-tight ${scoreClasses(score)}`}>
             {score}%

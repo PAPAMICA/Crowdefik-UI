@@ -1,3 +1,5 @@
+import json as _json
+import math
 from datetime import datetime, timedelta
 from typing import Annotated, Any
 
@@ -7,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db import get_db
 from app.integrations import abuseipdb_client, ipgeo_client
-from app.models import IpGeoCache, User
+from app.models import IpGeoCache, StoredAlert, StoredDecision, User
 
 router = APIRouter(prefix="/ip", tags=["ip"])
 
@@ -109,3 +111,105 @@ def get_ip_info(
         db.commit()
 
     return {"ip": ip, "geo": geo, "abuse": abuse}
+
+
+@router.get("/{ip}/alerts")
+def get_ip_alerts(
+    ip: str,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(get_current_user)],
+    page: int = 1,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """All stored alerts for a specific attacker IP, paginated."""
+    limit = max(1, min(limit, 200))
+    q = (
+        db.query(StoredAlert)
+        .filter(StoredAlert.source_ip == ip)
+        .order_by(StoredAlert.start_at.desc())
+    )
+    total = q.count()
+    rows = q.offset((page - 1) * limit).limit(limit).all()
+
+    alerts = []
+    for row in rows:
+        try:
+            a = _json.loads(row.raw_json)
+        except Exception:
+            a = {}
+        alerts.append({
+            "id": row.id,
+            "scenario": row.scenario,
+            "target_host": row.target_host,
+            "events_count": row.events_count,
+            "start_at": row.start_at.isoformat() if row.start_at else None,
+            "stop_at": row.stop_at.isoformat() if row.stop_at else None,
+            "context": a.get("context") or [],
+        })
+
+    return {
+        "total": total,
+        "page": page,
+        "pages": math.ceil(total / limit) if total else 0,
+        "alerts": alerts,
+    }
+
+
+@router.get("/{ip}/decisions")
+def get_ip_decisions(
+    ip: str,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(get_current_user)],
+) -> list[dict[str, Any]]:
+    """All stored decisions for a specific IP."""
+    rows = (
+        db.query(StoredDecision)
+        .filter(StoredDecision.ip_value == ip)
+        .order_by(StoredDecision.synced_at.desc())
+        .limit(100)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "type": r.decision_type,
+            "scenario": r.scenario,
+            "duration": r.duration_str,
+            "until": r.until.isoformat() if r.until else None,
+            "synced_at": r.synced_at.isoformat() if r.synced_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/{ip}/timeline")
+def get_ip_timeline(
+    ip: str,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(get_current_user)],
+    days: int = 30,
+) -> list[dict[str, Any]]:
+    """Daily alert counts for this IP over the last N days."""
+    from sqlalchemy import func
+    from datetime import date
+
+    days = max(1, min(days, 90))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    rows = (
+        db.query(
+            func.strftime('%Y-%m-%d', StoredAlert.synced_at).label('day'),
+            func.count(StoredAlert.id).label('cnt'),
+        )
+        .filter(StoredAlert.source_ip == ip, StoredAlert.synced_at >= cutoff)
+        .group_by('day')
+        .all()
+    )
+    day_map = {r.day: r.cnt for r in rows}
+
+    result = []
+    for i in range(days - 1, -1, -1):
+        d = (datetime.utcnow() - timedelta(days=i)).date()
+        key = d.isoformat()
+        result.append({"date": key, "count": day_map.get(key, 0)})
+    return result

@@ -9,7 +9,9 @@ import { apiFetch, getToken, wsDashboardUrl } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
 import { Skeleton, SkeletonCard } from '../components/Skeleton'
+import { setLatestAlertCount } from '../components/Sidebar'
 import { usePagePerf } from '../hooks/usePagePerf'
+import { faviconUrl } from '../utils/favicon'
 
 const AttackerMap = lazy(() => import('../components/AttackerMap').then((m) => ({ default: m.AttackerMap })))
 
@@ -24,7 +26,7 @@ type Summary = {
 }
 type GeoPoint = { ip: string; lat: number; lon: number; count: number; scenario: string; country: string }
 type TimelinePoint = { date: string; alerts: number; blocked: number }
-type ServiceStat = { host: string; alert_count: number; unique_ips: number; favicon: string | null }
+type ServiceStat = { host: string; alert_count: number; unique_ips: number }
 
 const CARD_CONFIG = [
   { key: 'routers_total' as const, label: 'Exposed routers', icon: Activity, color: 'bg-violet-500/10 text-violet-500', border: 'border-violet-500/20' },
@@ -62,7 +64,11 @@ export function DashboardPage() {
     setLoadingServices(true)
 
     void apiFetch('/api/dashboard/summary').then(async (r) => {
-      if (r.ok) setSummary((await r.json()) as Summary)
+      if (r.ok) {
+        const data = (await r.json()) as Summary
+        setSummary(data)
+        if (typeof data.alerts_count === 'number') setLatestAlertCount(data.alerts_count)
+      }
       setLoadingSummary(false)
     })
     void apiFetch(`/api/dashboard/geo?days=${days}`).then(async (r) => {
@@ -92,8 +98,12 @@ export function DashboardPage() {
       try {
         const msg = JSON.parse(String(e.data))
         if (msg?.type === 'dashboard') {
-          setSummary(msg.payload as Summary)
+          const payload = msg.payload as Summary
+          setSummary(payload)
           setLastUpdate(new Date())
+          if (typeof payload.alerts_count === 'number') {
+            setLatestAlertCount(payload.alerts_count)
+          }
         }
       } catch { /* ignore */ }
     }
@@ -306,7 +316,7 @@ export function DashboardPage() {
                     className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-50 dark:hover:bg-slate-700/30"
                   >
                     <img
-                      src={s.favicon ?? `https://icons.duckduckgo.com/ip3/${s.host}.ico`}
+                      src={faviconUrl(s.host)}
                       alt=""
                       width={16}
                       height={16}

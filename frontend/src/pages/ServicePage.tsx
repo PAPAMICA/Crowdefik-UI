@@ -1,6 +1,6 @@
 import {
   Activity, AlertTriangle, ArrowLeft, Ban, ExternalLink,
-  FileText, Globe, RefreshCw, Server, Shield, Users,
+  FileText, Globe, RefreshCw, Server, Settings, Shield, Users,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
@@ -12,7 +12,9 @@ import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
 import { Skeleton, SkeletonCard, SkeletonRow } from '../components/Skeleton'
+import { useToast } from '../components/Toast'
 import { usePagePerf } from '../hooks/usePagePerf'
+import { faviconUrl } from '../utils/favicon'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -55,6 +57,198 @@ type LogEntry = {
 }
 
 type LogsData = { host: string; available: boolean; entries: LogEntry[] }
+
+type Policy = {
+  host: string
+  min_events_to_display: number
+  auto_ban_enabled: boolean
+  auto_ban_min_score: number | null
+  auto_ban_min_events: number | null
+  auto_ban_window_hours: number
+  auto_ban_duration: string
+  muted_scenarios: string[]
+  notes: string | null
+  updated_at: string | null
+}
+
+// ── Policy editor ─────────────────────────────────────────────────────────────
+
+function PolicyTab({ host, isSuperuser }: { host: string; isSuperuser: boolean }) {
+  const { addToast } = useToast()
+  const [policy, setPolicy] = useState<Policy | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState<Policy | null>(null)
+  const [knownScenarios, setKnownScenarios] = useState<string[]>([])
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      const [pRes, sRes] = await Promise.all([
+        apiFetch(`/api/services/${encodeURIComponent(host)}/policy`),
+        apiFetch(`/api/services/${encodeURIComponent(host)}/overview?days=30`),
+      ])
+      if (pRes.ok) {
+        const p = await pRes.json() as Policy
+        setPolicy(p)
+        setForm(p)
+      }
+      if (sRes.ok) {
+        const data = await sRes.json() as { top_scenarios: { scenario: string }[] }
+        setKnownScenarios(data.top_scenarios?.map((s) => s.scenario) ?? [])
+      }
+      setLoading(false)
+    }
+    void load()
+  }, [host])
+
+  async function handleSave() {
+    if (!form) return
+    setSaving(true)
+    try {
+      const res = await apiFetch(`/api/services/${encodeURIComponent(host)}/policy`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          ...form,
+          min_events_to_display: form.min_events_to_display,
+        }),
+      })
+      if (res.ok) {
+        const p = await res.json() as Policy
+        setPolicy(p); setForm(p)
+        addToast('Policy saved', 'success')
+      } else {
+        const err = await res.json().catch(() => ({}))
+        addToast((err as { detail?: string }).detail ?? 'Save failed', 'error')
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function toggleScenario(scenario: string) {
+    if (!form) return
+    const muted = form.muted_scenarios.includes(scenario)
+      ? form.muted_scenarios.filter((s) => s !== scenario)
+      : [...form.muted_scenarios, scenario]
+    setForm({ ...form, muted_scenarios: muted })
+  }
+
+  if (loading) return <div className="p-6 text-sm text-slate-400">Loading policy…</div>
+  if (!form) return <div className="p-6 text-sm text-red-400">Failed to load policy</div>
+
+  return (
+    <div className="space-y-6 p-6">
+      {/* Display settings */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+        <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+          <Globe className="h-4 w-4 text-blue-500" /> Display settings
+        </h3>
+        <label className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
+          <span className="min-w-[220px]">Min events to display alert</span>
+          <input type="number" min={1} max={100} value={form.min_events_to_display}
+            disabled={!isSuperuser}
+            onChange={(e) => setForm({ ...form, min_events_to_display: Number(e.target.value) })}
+            className="w-20 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+        </label>
+      </div>
+
+      {/* Auto-ban */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+            <Ban className="h-4 w-4 text-red-500" /> Auto-ban engine
+          </h3>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <span className="text-xs text-slate-500">Enabled</span>
+            <div className="relative">
+              <input type="checkbox" checked={form.auto_ban_enabled} disabled={!isSuperuser}
+                onChange={(e) => setForm({ ...form, auto_ban_enabled: e.target.checked })}
+                className="sr-only peer" />
+              <div className={`h-5 w-9 rounded-full transition-colors ${form.auto_ban_enabled ? 'bg-red-500' : 'bg-slate-300 dark:bg-slate-600'} peer-disabled:opacity-60`}
+                onClick={() => isSuperuser && setForm({ ...form, auto_ban_enabled: !form.auto_ban_enabled })} />
+              <div className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${form.auto_ban_enabled ? 'translate-x-4' : 'translate-x-0.5'}`}
+                onClick={() => isSuperuser && setForm({ ...form, auto_ban_enabled: !form.auto_ban_enabled })} />
+            </div>
+          </label>
+        </div>
+        <div className="space-y-3">
+          {[
+            { label: 'Min AbuseIPDB score to trigger ban (0–100)', key: 'auto_ban_min_score', min: 0, max: 100 },
+            { label: 'Min events in window to trigger ban', key: 'auto_ban_min_events', min: 1, max: 9999 },
+            { label: 'Rolling window (hours)', key: 'auto_ban_window_hours', min: 1, max: 720 },
+          ].map(({ label, key, min, max }) => (
+            <div key={key} className="flex items-center gap-3 text-sm">
+              <span className="min-w-[280px] text-slate-600 dark:text-slate-400">{label}</span>
+              <input type="number" min={min} max={max}
+                value={(form as unknown as Record<string, number | null>)[key] ?? ''}
+                disabled={!isSuperuser || !form.auto_ban_enabled}
+                onChange={(e) => setForm({ ...form, [key]: e.target.value ? Number(e.target.value) : null } as Policy)}
+                className="w-24 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+            </div>
+          ))}
+          <div className="flex items-center gap-3 text-sm">
+            <span className="min-w-[280px] text-slate-600 dark:text-slate-400">Ban duration</span>
+            <select value={form.auto_ban_duration} disabled={!isSuperuser || !form.auto_ban_enabled}
+              onChange={(e) => setForm({ ...form, auto_ban_duration: e.target.value })}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+              {['1h', '6h', '24h', '48h', '168h', '720h'].map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Muted scenarios */}
+      {knownScenarios.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+          <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+            <Shield className="h-4 w-4 text-amber-500" /> Muted scenarios
+            <span className="text-xs font-normal text-slate-400">— alerts from these scenarios are suppressed for this service</span>
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {knownScenarios.map((scenario) => {
+              const muted = form.muted_scenarios.includes(scenario)
+              return (
+                <button key={scenario} type="button" disabled={!isSuperuser}
+                  onClick={() => toggleScenario(scenario)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition ${muted
+                    ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400 line-through opacity-60'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'}`}>
+                  {scenario}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Notes */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+          <FileText className="h-4 w-4 text-slate-400" /> Admin notes
+        </h3>
+        <textarea rows={4} value={form.notes ?? ''} disabled={!isSuperuser}
+          onChange={(e) => setForm({ ...form, notes: e.target.value || null })}
+          placeholder="Internal notes about this service…"
+          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+      </div>
+
+      {isSuperuser && (
+        <div className="flex justify-end">
+          <button type="button" onClick={() => void handleSave()} disabled={saving}
+            className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60">
+            {saving ? 'Saving…' : 'Save policy'}
+          </button>
+        </div>
+      )}
+      {policy?.updated_at && (
+        <p className="text-center text-xs text-slate-400">Last updated: {new Date(policy.updated_at).toLocaleString()}</p>
+      )}
+    </div>
+  )
+}
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
 
@@ -122,6 +316,7 @@ export function ServicePage() {
   usePagePerf(decodedHost, loadingOverview || loadingLogs)
   const [logSearch, setLogSearch] = useState('')
   const [logTab, setLogTab] = useState<'all' | '2xx' | '3xx' | '4xx' | '5xx'>('all')
+  const [mainTab, setMainTab] = useState<'overview' | 'policy'>('overview')
 
   async function loadOverview() {
     if (!host) return
@@ -184,13 +379,16 @@ export function ServicePage() {
           <div>
             <div className="flex items-center gap-3">
               <img
-                src={`https://icons.duckduckgo.com/ip3/${host}.ico`}
+                src={faviconUrl(host)}
                 alt="" width={24} height={24}
                 className="h-6 w-6 rounded-md object-contain"
                 onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
               />
               <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{host}</h1>
-              <a href={`https://${host}`} target="_blank" rel="noopener noreferrer"
+              <a
+                href={host.includes(':') ? `http://${host}` : `https://${host}`}
+                target="_blank" rel="noopener noreferrer"
+                title="Open in browser"
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-700/40 dark:text-slate-400">
                 <ExternalLink className="h-3 w-3" /> Visit
               </a>
@@ -211,6 +409,22 @@ export function ServicePage() {
           </button>
         </div>
       </div>
+
+      {/* Tab bar */}
+      <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-800 w-fit">
+        {([['overview', 'Overview', Shield], ['policy', 'Policy', Settings]] as const).map(([id, label, Icon]) => (
+          <button key={id} type="button" onClick={() => setMainTab(id)}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mainTab === id ? 'bg-violet-600 text-white shadow' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}>
+            <Icon className="h-3.5 w-3.5" />{label}
+          </button>
+        ))}
+      </div>
+
+      {mainTab === 'policy' && host && (
+        <PolicyTab host={decodedHost} isSuperuser={!!me?.is_superuser} />
+      )}
+
+      {mainTab === 'overview' && <>
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -518,6 +732,8 @@ export function ServicePage() {
           </>
         )}
       </Section>
+
+      </> /* end overview tab */}
     </div>
   )
 }

@@ -128,3 +128,36 @@ class AuditLog(Base):
     target = mapped_column(String(512), nullable=True)
     detail = mapped_column(Text, nullable=True)
     created_at = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class Allowlist(Base):
+    """Local allowlist — IPs/CIDRs that should never be banned."""
+    __tablename__ = "allowlist"
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    value = mapped_column(String(256), unique=True, index=True, nullable=False)  # IP or CIDR
+    reason = mapped_column(String(512), nullable=True)
+    created_by = mapped_column(String(128), nullable=True)
+    expires_at = mapped_column(DateTime, nullable=True)   # None = permanent
+    active = mapped_column(Boolean, default=True, nullable=False)
+    created_at = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ServicePolicy(Base):
+    """Per-service security policy — controls display filters and auto-ban behaviour."""
+    __tablename__ = "service_policies"
+
+    host = mapped_column(String(256), primary_key=True)
+    # Display filter
+    min_events_to_display = mapped_column(Integer, default=1, nullable=False)
+    # Auto-ban (triggered by sync_service when thresholds are exceeded)
+    auto_ban_enabled = mapped_column(Boolean, default=False, nullable=False)
+    auto_ban_min_score = mapped_column(Integer, nullable=True)    # AbuseIPDB score threshold
+    auto_ban_min_events = mapped_column(Integer, nullable=True)   # events count within window
+    auto_ban_window_hours = mapped_column(Integer, default=24, nullable=False)  # rolling window
+    auto_ban_duration = mapped_column(String(64), default="24h", nullable=False)
+    # Muted scenarios — JSON list of scenario names to suppress for this service
+    muted_scenarios = mapped_column(Text, nullable=True)
+    # Admin notes
+    notes = mapped_column(Text, nullable=True)
+    updated_at = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

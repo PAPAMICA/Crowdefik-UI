@@ -195,7 +195,7 @@ def geo_points(
         rows_v = filter_rows_for_user(build_router_rows(raw_r), is_superuser=False, allowed_routers=allowed)
         hosts = hosts_from_rules(rows_v)
         if hosts:
-            q = q.filter(StoredAlert.source_ip.in_(list(hosts)))
+            q = q.filter(StoredAlert.target_host.in_(hosts))
 
     alerts = q.all()
 
@@ -243,7 +243,7 @@ def service_stats(
                 alert_q = alert_q.filter(StoredAlert.target_host.in_(list(hosts)))
 
         alerts_by_service = [
-            {"host": host or "unknown", "alert_count": count, "favicon": f"https://icons.duckduckgo.com/ip3/{host}.ico" if host else None}
+            {"host": host or "unknown", "alert_count": count}
             for host, count in alert_q.order_by(func.count(StoredAlert.id).desc()).limit(20).all()
         ]
         ip_q = (

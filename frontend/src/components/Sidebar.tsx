@@ -13,12 +13,57 @@ import {
   Settings,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   User,
   Users,
 } from 'lucide-react'
-import { NavLink, Link } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { useTheme } from '../theme'
+
+const STORAGE_KEY_SEEN = 'crowdefik:alerts_seen_count'
+const STORAGE_KEY_LATEST = 'crowdefik:alerts_latest_count'
+
+/** Store the latest known alert total (updated by DashboardPage WS) */
+export function setLatestAlertCount(count: number) {
+  localStorage.setItem(STORAGE_KEY_LATEST, String(count))
+  window.dispatchEvent(new Event('crowdefik:alert-count-updated'))
+}
+
+function useNewAlertsCount() {
+  const [newCount, setNewCount] = useState(0)
+  const location = useLocation()
+
+  function read() {
+    const latest = Number(localStorage.getItem(STORAGE_KEY_LATEST) ?? '0')
+    const seen = Number(localStorage.getItem(STORAGE_KEY_SEEN) ?? '0')
+    setNewCount(Math.max(0, latest - seen))
+  }
+
+  // When user visits alerts page, mark alerts as seen
+  useEffect(() => {
+    if (location.pathname === '/alerts') {
+      const latest = Number(localStorage.getItem(STORAGE_KEY_LATEST) ?? '0')
+      localStorage.setItem(STORAGE_KEY_SEEN, String(latest))
+      setNewCount(0)
+    }
+  }, [location.pathname])
+
+  useEffect(() => {
+    read()
+    window.addEventListener('crowdefik:alert-count-updated', read)
+    window.addEventListener('storage', read)
+    window.addEventListener('focus', read)
+    return () => {
+      window.removeEventListener('crowdefik:alert-count-updated', read)
+      window.removeEventListener('storage', read)
+      window.removeEventListener('focus', read)
+    }
+  }, [])
+
+  return newCount
+}
 
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', color: 'text-violet-500' },
@@ -30,6 +75,7 @@ const NAV = [
 const INFRA_NAV = [
   { to: '/traefik', icon: Route, label: 'Traefik', color: 'text-cyan-500' },
   { to: '/crowdsec', icon: Bot, label: 'CrowdSec', color: 'text-emerald-500' },
+  { to: '/crowdsec/allowlist', icon: ShieldCheck, label: 'Allowlist', color: 'text-emerald-400' },
 ]
 
 const LOGS_NAV = [
@@ -49,6 +95,7 @@ type Props = { collapsed: boolean; onToggle: () => void }
 export function Sidebar({ collapsed, onToggle }: Props) {
   const { me, logout } = useAuth()
   const { mode, setMode } = useTheme()
+  const newAlerts = useNewAlertsCount()
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     [
@@ -85,7 +132,12 @@ export function Sidebar({ collapsed, onToggle }: Props) {
           {NAV.map(({ to, icon: Icon, label, color }) => (
             <NavLink key={to} to={to} end={to === '/'} className={linkClass} title={collapsed ? label : undefined}>
               <Icon className={`h-4 w-4 shrink-0 ${color}`} />
-              {!collapsed && <span>{label}</span>}
+              {!collapsed && <span className="flex-1">{label}</span>}
+              {to === '/alerts' && newAlerts > 0 && (
+                <span className="ml-auto flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white animate-pulse">
+                  {newAlerts > 99 ? '99+' : newAlerts}
+                </span>
+              )}
             </NavLink>
           ))}
         </div>

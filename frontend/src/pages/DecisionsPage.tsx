@@ -1,11 +1,19 @@
-import { Ban, ChevronLeft, ChevronRight, Clock, Download, Filter, Plus, RefreshCw, Search, Shield, ShieldBan, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import {
+  Ban, ChevronLeft, ChevronRight, Clock, Download,
+  Filter, Plus, RefreshCw, Search, Shield, ShieldBan,
+  Trash2, X,
+} from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Navigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
-import { usePagePerf } from '../hooks/usePagePerf'
 import { CountryFlag } from '../components/CountryFlag'
 import { IpBadge } from '../components/IpBadge'
+import { useToast } from '../components/Toast'
+import { usePagePerf } from '../hooks/usePagePerf'
+import { faviconUrl } from '../utils/favicon'
+
+// ── CSV export ─────────────────────────────────────────────────────────────────
 
 function exportCSV(rows: Decision[], filename: string) {
   const headers = ['ID', 'IP', 'Type', 'Scenario', 'Service', 'Until']
@@ -25,24 +33,20 @@ function exportCSV(rows: Decision[], filename: string) {
   URL.revokeObjectURL(url)
 }
 
+// ── Types ──────────────────────────────────────────────────────────────────────
+
 type Decision = {
-  id?: number
-  value?: string
-  ip?: string
-  type?: string
-  scope?: string
-  duration?: string
-  until?: string
-  scenario?: string
-  reason?: string
-  origin?: string
-  _target_host?: string
-  [k: string]: unknown
+  id?: number; value?: string; ip?: string; type?: string; scope?: string
+  duration?: string; until?: string; scenario?: string; reason?: string
+  origin?: string; _target_host?: string; [k: string]: unknown
 }
+
+type DecisionPage = { total: number; page: number; pages: number; decisions: Decision[] }
 
 const PAGE_SIZE = 25
 
-// Deterministic color from scenario string
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
 const SCENARIO_PALETTES = [
   'bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20',
   'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20',
@@ -60,6 +64,11 @@ function scenarioColor(scenario: string): string {
   let hash = 0
   for (let i = 0; i < scenario.length; i++) hash = ((hash * 31) + scenario.charCodeAt(i)) >>> 0
   return SCENARIO_PALETTES[hash % SCENARIO_PALETTES.length]
+}
+
+function extractCountry(d: Decision): string {
+  const cc = (d.country_code || d.countryCode || d.cn || '') as string
+  return typeof cc === 'string' ? cc.toUpperCase() : ''
 }
 
 function ScenarioBadge({ scenario }: { scenario: string }) {
@@ -81,66 +90,36 @@ function TypeBadge({ type }: { type: string }) {
   return <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">{type}</span>
 }
 
-// ── Country code extraction ───────────────────────────────────
-// decisions sometimes carry country info in various fields
-function extractCountry(d: Decision): string {
-  // Try common keys
-  const cc = (d.country_code || d.countryCode || d.cn || '') as string
-  return typeof cc === 'string' ? cc.toUpperCase() : ''
-}
+// ── Pagination ─────────────────────────────────────────────────────────────────
 
-// ── Pagination controls ───────────────────────────────────────
-function Pagination({
-  page, total, pageSize, onChange,
-}: { page: number; total: number; pageSize: number; onChange: (p: number) => void }) {
+function Pagination({ page, total, pageSize, onChange }: { page: number; total: number; pageSize: number; onChange: (p: number) => void }) {
   const pages = Math.ceil(total / pageSize)
   if (pages <= 1) return null
   const from = (page - 1) * pageSize + 1
   const to = Math.min(page * pageSize, total)
-
   return (
     <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 dark:border-slate-700/50">
-      <span className="text-xs text-slate-500 dark:text-slate-400">
-        {from}–{to} of {total}
-      </span>
+      <span className="text-xs text-slate-500 dark:text-slate-400">{from}–{to} of {total.toLocaleString()}</span>
       <div className="flex gap-1">
-        <button
-          type="button"
-          disabled={page <= 1}
-          onClick={() => onChange(page - 1)}
-          className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
-        >
+        <button type="button" disabled={page <= 1} onClick={() => onChange(page - 1)}
+          className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
           <ChevronLeft className="h-4 w-4" />
         </button>
         {Array.from({ length: Math.min(pages, 7) }, (_, i) => {
-          // show first, last, and pages around current
           let p: number
           if (pages <= 7) p = i + 1
           else if (i === 0) p = 1
           else if (i === 6) p = pages
           else p = Math.max(2, Math.min(pages - 1, page - 2 + i))
           return (
-            <button
-              key={p}
-              type="button"
-              onClick={() => onChange(p)}
-              className={[
-                'min-w-[30px] rounded-lg border px-2 py-1.5 text-xs',
-                p === page
-                  ? 'border-violet-500 bg-violet-500/10 text-violet-600 dark:text-violet-400'
-                  : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400',
-              ].join(' ')}
-            >
+            <button key={p} type="button" onClick={() => onChange(p)}
+              className={`min-w-[30px] rounded-lg border px-2 py-1.5 text-xs ${p === page ? 'border-violet-500 bg-violet-500/10 text-violet-600 dark:text-violet-400' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'}`}>
               {p}
             </button>
           )
         })}
-        <button
-          type="button"
-          disabled={page >= pages}
-          onClick={() => onChange(page + 1)}
-          className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
-        >
+        <button type="button" disabled={page >= pages} onClick={() => onChange(page + 1)}
+          className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
           <ChevronRight className="h-4 w-4" />
         </button>
       </div>
@@ -148,26 +127,113 @@ function Pagination({
   )
 }
 
+// ── Confirm modal ──────────────────────────────────────────────────────────────
+
+function ConfirmModal({ ip, decisionId, onConfirm, onCancel, loading }: {
+  ip: string; decisionId: number; onConfirm: () => void; onCancel: () => void; loading: boolean
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900 space-y-4">
+        <div className="flex items-center justify-between">
+          <span className="font-semibold text-slate-900 dark:text-white">Remove ban?</span>
+          <button type="button" onClick={onCancel} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p className="text-sm text-slate-600 dark:text-slate-400">
+          Delete decision <code className="font-mono text-xs">#{decisionId}</code> for{' '}
+          <code className="font-mono text-xs font-semibold">{ip}</code>?
+        </p>
+        <div className="flex gap-2">
+          <button type="button" onClick={onCancel}
+            className="flex-1 rounded-xl border border-slate-200 bg-white py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={loading}
+            className="flex-1 rounded-xl bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60">
+            {loading ? 'Removing…' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Main page ──────────────────────────────────────────────────────────────────
+
 export function DecisionsPage() {
   const { me, loading } = useAuth()
-  const [rows, setRows] = useState<Decision[]>([])
-  const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState('all')
-  const [page, setPage] = useState(1)
+  const { addToast } = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const [search, setSearch] = useState(searchParams.get('search') ?? '')
+  const [debouncedSearch, setDebouncedSearch] = useState(searchParams.get('search') ?? '')
+  const [typeFilter, setTypeFilter] = useState(searchParams.get('type') ?? 'all')
+  const [page, setPage] = useState(Number(searchParams.get('page') ?? '1'))
+
+  const [data, setData] = useState<DecisionPage | null>(null)
   const [fetchingData, setFetchingData] = useState(true)
-  usePagePerf('Decisions', fetchingData)
-  const [unbanning, setUnbanning] = useState<number | null>(null)
+  const [unbanning, setUnbanning] = useState(false)
+  const [confirmUnban, setConfirmUnban] = useState<{ ip: string; id: number } | null>(null)
   const [showBanForm, setShowBanForm] = useState(false)
   const [banIp, setBanIp] = useState('')
   const [banDuration, setBanDuration] = useState('24h')
   const [banReason, setBanReason] = useState('manual')
   const [banning, setBanning] = useState(false)
-  const [banMsg, setBanMsg] = useState<{ text: string; ok: boolean } | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [bulkUnbanning, setBulkUnbanning] = useState(false)
+
+  usePagePerf('Decisions', fetchingData)
+
+  // Debounce search
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 350)
+    return () => clearTimeout(t)
+  }, [search])
+
+  // Sync URL params
+  useEffect(() => {
+    const p: Record<string, string> = {}
+    if (debouncedSearch) p.search = debouncedSearch
+    if (typeFilter !== 'all') p.type = typeFilter
+    if (page > 1) p.page = String(page)
+    setSearchParams(p, { replace: true })
+  }, [debouncedSearch, typeFilter, page]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset page when filters change
+  useEffect(() => { setPage(1) }, [debouncedSearch, typeFilter])
+
+  const buildParams = useCallback(() => {
+    const p = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) })
+    if (debouncedSearch) p.set('search', debouncedSearch)
+    if (typeFilter !== 'all') p.set('type_filter', typeFilter)
+    return p
+  }, [page, debouncedSearch, typeFilter])
+
+  async function loadData() {
+    setFetchingData(true)
+    try {
+      const res = await apiFetch(`/api/crowdsec/decisions?${buildParams()}`)
+      if (res.ok) setData(await res.json() as DecisionPage)
+    } finally {
+      setFetchingData(false)
+    }
+  }
+
+  useEffect(() => { void loadData() }, [page, debouncedSearch, typeFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Type options from current page data — ideally from API but derived locally works
+  const types = useMemo(() => {
+    const s = new Set<string>()
+    ;(data?.decisions ?? []).forEach((d) => { if (d.type) s.add(String(d.type)) })
+    return Array.from(s).sort()
+  }, [data])
 
   async function handleBan() {
     if (!banIp.trim()) return
     setBanning(true)
-    setBanMsg(null)
     try {
       const res = await apiFetch('/api/crowdsec/decisions', {
         method: 'POST',
@@ -175,97 +241,87 @@ export function DecisionsPage() {
         body: JSON.stringify({ ip: banIp.trim(), duration: banDuration, reason: banReason }),
       })
       if (res.ok) {
-        setBanMsg({ text: `${banIp} banned for ${banDuration}`, ok: true })
-        setBanIp('')
-        setTimeout(() => { setShowBanForm(false); setBanMsg(null) }, 1500)
+        addToast(`${banIp.trim()} banned for ${banDuration}`, 'success')
+        setBanIp(''); setShowBanForm(false)
         void loadData()
       } else {
         const err = await res.json().catch(() => ({}))
-        setBanMsg({ text: (err as { detail?: string }).detail ?? 'Ban failed', ok: false })
+        addToast((err as { detail?: string }).detail ?? 'Ban failed', 'error')
       }
     } finally {
       setBanning(false)
     }
   }
 
-  async function loadData() {
-    setFetchingData(true)
+  async function handleUnban() {
+    if (!confirmUnban) return
+    setUnbanning(true)
     try {
-      const res = await apiFetch('/api/crowdsec/decisions?limit=2000')
-      if (res.ok) setRows((await res.json()) as Decision[])
+      const res = await apiFetch(`/api/crowdsec/decisions/${confirmUnban.id}`, { method: 'DELETE' })
+      if (res.ok) {
+        addToast(`Decision #${confirmUnban.id} removed`, 'success')
+        void loadData()
+      } else {
+        addToast('Failed to remove decision', 'error')
+      }
     } finally {
-      setFetchingData(false)
+      setUnbanning(false)
+      setConfirmUnban(null)
     }
   }
 
-  useEffect(() => { void loadData() }, [])
-
-  const types = useMemo(() => {
-    const s = new Set<string>()
-    rows.forEach((d) => { if (d.type) s.add(String(d.type)) })
-    return Array.from(s).sort()
-  }, [rows])
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase()
-    return rows.filter((d) => {
-      const ip = String(d.value ?? d.ip ?? '')
-      const t = String(d.type ?? '')
-      if (typeFilter !== 'all' && t !== typeFilter) return false
-      if (!q) return true
-      return ip.includes(q) || t.includes(q) || String(d.scenario ?? '').toLowerCase().includes(q)
-    })
-  }, [rows, search, typeFilter])
-
-  // Reset to page 1 when filters change
-  useEffect(() => setPage(1), [search, typeFilter])
-
-  const paged = useMemo(
-    () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [filtered, page],
-  )
-
-  async function unban(id: number) {
-    if (!confirm(`Unban decision #${id}?`)) return
-    setUnbanning(id)
+  async function handleBulkUnban() {
+    const ids = [...selectedIds]
+    if (!ids.length) return
+    setBulkUnbanning(true)
     try {
-      const res = await apiFetch(`/api/crowdsec/decisions/${id}`, { method: 'DELETE' })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
-        alert(err.detail ?? JSON.stringify(err))
+      const res = await apiFetch('/api/crowdsec/decisions/bulk', {
+        method: 'DELETE',
+        body: JSON.stringify({ ids }),
+      })
+      if (res.ok) {
+        const d = await res.json() as { success: number; failed: number[] }
+        addToast(`${d.success} decision${d.success !== 1 ? 's' : ''} removed`, 'success')
+        if (d.failed.length) addToast(`${d.failed.length} failed to remove`, 'warning')
+        setSelectedIds(new Set())
+        void loadData()
       } else {
-        await loadData()
+        addToast('Bulk unban failed', 'error')
       }
     } finally {
-      setUnbanning(null)
+      setBulkUnbanning(false)
     }
   }
 
   if (!loading && !me) return <Navigate to="/login" replace />
 
+  const rows = data?.decisions ?? []
+  const total = data?.total ?? 0
+
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Decisions</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {filtered.length} of {rows.length} active decisions from CrowdSec LAPI
+            {total.toLocaleString()} active decision{total !== 1 ? 's' : ''} from CrowdSec LAPI
           </p>
         </div>
         <div className="flex gap-2">
           {me?.is_superuser && (
-            <button type="button" onClick={() => { setShowBanForm(!showBanForm); setBanMsg(null) }}
+            <button type="button" onClick={() => { setShowBanForm(!showBanForm) }}
               className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">
               <Plus className="h-4 w-4" /> Ban IP
             </button>
           )}
-          <button type="button" onClick={() => exportCSV(filtered, `decisions-${new Date().toISOString().slice(0,10)}.csv`)}
+          <button type="button" onClick={() => exportCSV(rows, `decisions-${new Date().toISOString().slice(0,10)}.csv`)}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
             <Download className="h-4 w-4" /> Export CSV
           </button>
           <button type="button" onClick={() => void loadData()}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
-            <RefreshCw className="h-4 w-4" /> Refresh
+            <RefreshCw className={`h-4 w-4 ${fetchingData ? 'animate-spin' : ''}`} /> Refresh
           </button>
         </div>
       </div>
@@ -278,8 +334,8 @@ export function DecisionsPage() {
             <span className="text-sm font-semibold text-red-800 dark:text-red-300">Ban an IP manually</span>
           </div>
           <div className="flex flex-wrap gap-3">
-            <input type="text" placeholder="IP address" value={banIp} onChange={(e) => setBanIp(e.target.value)}
-              className="flex-1 min-w-[180px] rounded-xl border border-red-200 bg-white px-3 py-2 text-sm dark:border-red-500/30 dark:bg-slate-800 dark:text-slate-200" />
+            <input type="text" placeholder="IP or CIDR (e.g. 1.2.3.4 or 10.0.0.0/8)" value={banIp} onChange={(e) => setBanIp(e.target.value)}
+              className="flex-1 min-w-[240px] rounded-xl border border-red-200 bg-white px-3 py-2 text-sm dark:border-red-500/30 dark:bg-slate-800 dark:text-slate-200" />
             <select value={banDuration} onChange={(e) => setBanDuration(e.target.value)}
               className="rounded-xl border border-red-200 bg-white px-3 py-2 text-sm dark:border-red-500/30 dark:bg-slate-800 dark:text-slate-200">
               <option value="1h">1 hour</option>
@@ -296,12 +352,10 @@ export function DecisionsPage() {
               {banning ? 'Banning…' : 'Ban'}
             </button>
           </div>
-          {banMsg && (
-            <p className={`mt-2 text-xs ${banMsg.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>{banMsg.text}</p>
-          )}
         </div>
       )}
 
+      {/* Filters */}
       <div className="flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -325,11 +379,36 @@ export function DecisionsPage() {
         </div>
       </div>
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && me?.is_superuser && (
+        <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{selectedIds.size} decision{selectedIds.size !== 1 ? 's' : ''} selected</span>
+          <button type="button" onClick={() => void handleBulkUnban()} disabled={bulkUnbanning}
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">
+            <Ban className="h-4 w-4" />
+            {bulkUnbanning ? 'Removing…' : `Unban ${selectedIds.size}`}
+          </button>
+          <button type="button" onClick={() => setSelectedIds(new Set())}
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-700">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Table */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700/50 dark:bg-slate-800/60">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 dark:border-slate-700/50">
+                {me?.is_superuser && (
+                  <th className="w-10 px-3 py-3">
+                    <input type="checkbox"
+                      checked={rows.length > 0 && rows.every((d) => typeof d.id === 'number' && selectedIds.has(d.id))}
+                      onChange={(e) => setSelectedIds(e.target.checked ? new Set(rows.filter((d) => typeof d.id === 'number').map((d) => d.id as number)) : new Set())}
+                      className="rounded" />
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">IP</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Type</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-400">Scenario</th>
@@ -339,7 +418,7 @@ export function DecisionsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-              {paged.map((d, i) => {
+              {rows.map((d, i) => {
                 const ip = String(d.value ?? d.ip ?? '')
                 const type = String(d.type ?? '')
                 const until = d.until ? new Date(String(d.until)).toLocaleString() : null
@@ -347,9 +426,24 @@ export function DecisionsPage() {
                 const scenario = String(d.scenario ?? d.reason ?? '')
                 const cc = extractCountry(d)
                 const decisionId = typeof d.id === 'number' ? d.id : null
+                const isSelected = typeof d.id === 'number' && selectedIds.has(d.id)
 
                 return (
-                  <tr key={`${ip}-${i}`} className="hover:bg-slate-50/50 dark:hover:bg-white/5">
+                  <tr key={d.id ?? i} className={`hover:bg-slate-50/50 dark:hover:bg-white/5 ${isSelected ? 'bg-emerald-50/50 dark:bg-emerald-900/10' : ''}`}>
+                    {me?.is_superuser && (
+                      <td className="w-10 px-3 py-3">
+                        {decisionId !== null && (
+                          <input type="checkbox" checked={isSelected}
+                            onChange={(e) => {
+                              const next = new Set(selectedIds)
+                              if (e.target.checked) next.add(decisionId)
+                              else next.delete(decisionId)
+                              setSelectedIds(next)
+                            }}
+                            className="rounded" />
+                        )}
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         {cc && <CountryFlag code={cc} size={20} />}
@@ -364,11 +458,9 @@ export function DecisionsPage() {
                     </td>
                     <td className="px-4 py-3">
                       {d._target_host ? (
-                        <a
-                          href={`https://${d._target_host}`} target="_blank" rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300"
-                        >
-                          <img src={`https://icons.duckduckgo.com/ip3/${d._target_host}.ico`} alt="" width={12} height={12}
+                        <a href={`https://${d._target_host}`} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300">
+                          <img src={faviconUrl(d._target_host)} alt="" width={12} height={12}
                             className="h-3 w-3 rounded-sm object-contain"
                             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
                           {d._target_host}
@@ -377,9 +469,7 @@ export function DecisionsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-0.5">
-                        {until && (
-                          <span className="text-xs text-slate-700 dark:text-slate-300">{until}</span>
-                        )}
+                        {until && <span className="text-xs text-slate-700 dark:text-slate-300">{until}</span>}
                         {duration && (
                           <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
                             <Clock className="h-3 w-3" />{duration}
@@ -389,15 +479,11 @@ export function DecisionsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end">
-                        {/* align colSpan */}
-                    {me?.is_superuser && decisionId !== null && (
-                          <button
-                            type="button"
-                            disabled={unbanning === decisionId}
+                        {me?.is_superuser && decisionId !== null && (
+                          <button type="button"
                             title={`Unban — delete decision #${decisionId}`}
-                            className="rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-red-700 hover:bg-red-500/20 disabled:opacity-40 dark:text-red-400"
-                            onClick={() => void unban(decisionId)}
-                          >
+                            className="rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-red-700 hover:bg-red-500/20 dark:text-red-400"
+                            onClick={() => setConfirmUnban({ ip, id: decisionId })}>
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         )}
@@ -406,18 +492,29 @@ export function DecisionsPage() {
                   </tr>
                 )
               })}
-              {!paged.length && (
+              {!rows.length && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-400">
-                    {rows.length ? 'No decisions match filters' : 'No active decisions — check CrowdSec settings'}
+                  <td colSpan={me?.is_superuser ? 7 : 6} className="px-4 py-12 text-center text-sm text-slate-400">
+                    {total === 0 ? 'No active decisions — check CrowdSec settings' : 'No decisions match filters'}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        <Pagination page={page} total={filtered.length} pageSize={PAGE_SIZE} onChange={setPage} />
+        <Pagination page={page} total={total} pageSize={PAGE_SIZE} onChange={setPage} />
       </div>
+
+      {/* Confirm unban modal */}
+      {confirmUnban && (
+        <ConfirmModal
+          ip={confirmUnban.ip}
+          decisionId={confirmUnban.id}
+          onConfirm={() => void handleUnban()}
+          onCancel={() => setConfirmUnban(null)}
+          loading={unbanning}
+        />
+      )}
     </div>
   )
 }

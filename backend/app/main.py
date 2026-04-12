@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, audit_api, auth, cache_refresh, crowdsec_api, dashboard, ip_info, logs_api, profile_api, routers_api, services_api, settings_api, test_connections, traefik_api, ws
+from app.api import admin, allowlist_api, audit_api, auth, cache_refresh, crowdsec_api, dashboard, ip_info, logs_api, profile_api, routers_api, services_api, settings_api, test_connections, traefik_api, ws
 from app.core.security import hash_password
 from app.db import SessionLocal, engine
 from app.models import Base, User
@@ -120,6 +120,16 @@ _MIGRATIONS: list[tuple[str, str]] = [
         "SELECT log_path_crowdsec FROM instance_settings LIMIT 1",
         "ALTER TABLE instance_settings ADD COLUMN log_path_crowdsec VARCHAR(512)",
     ),
+    # Allowlist table is created by create_all, but add a guard in case of partial migration
+    (
+        "SELECT id FROM allowlist LIMIT 1",
+        "CREATE TABLE IF NOT EXISTS allowlist (id INTEGER PRIMARY KEY AUTOINCREMENT, value VARCHAR(256) UNIQUE NOT NULL, reason VARCHAR(512), created_by VARCHAR(128), expires_at DATETIME, active BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    ),
+    # ServicePolicy table
+    (
+        "SELECT host FROM service_policies LIMIT 1",
+        "CREATE TABLE IF NOT EXISTS service_policies (host VARCHAR(256) PRIMARY KEY, min_events_to_display INTEGER NOT NULL DEFAULT 1, auto_ban_enabled BOOLEAN NOT NULL DEFAULT 0, auto_ban_min_score INTEGER, auto_ban_min_events INTEGER, auto_ban_window_hours INTEGER NOT NULL DEFAULT 24, auto_ban_duration VARCHAR(64) NOT NULL DEFAULT '24h', muted_scenarios TEXT, notes TEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    ),
 ]
 
 
@@ -200,6 +210,7 @@ def create_app() -> FastAPI:
     app.include_router(services_api.router, prefix="/api")
     app.include_router(logs_api.router, prefix="/api")
     app.include_router(ip_info.router, prefix="/api")
+    app.include_router(allowlist_api.router, prefix="/api")
     app.include_router(ws.router)
 
     @app.get("/api/health")

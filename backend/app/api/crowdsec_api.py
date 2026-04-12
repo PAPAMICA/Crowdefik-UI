@@ -1,5 +1,6 @@
 import json as _json
 import math
+from math import ceil
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,11 +23,42 @@ from app.services.scope_filter import blob_matches_hosts, hosts_from_rules
 from app.settings import get_settings
 
 
+import ipaddress as _ipaddress
+
+
+def _validate_ip_or_cidr(v: str) -> str:
+    v = v.strip()
+    try:
+        _ipaddress.ip_address(v)
+        return v
+    except ValueError:
+        pass
+    try:
+        _ipaddress.ip_network(v, strict=False)
+        return v
+    except ValueError:
+        pass
+    if len(v) == 2 and v.isalpha():
+        return v.upper()
+    raise ValueError(f"Invalid IP, CIDR or country code: {v!r}")
+
+
 class BanIn(BaseModel):
     ip: str
     duration: str = "24h"
     reason: str = "manual"
     type: str = "ban"
+
+
+class BulkBanIn(BaseModel):
+    ips: list[str]
+    duration: str = "24h"
+    reason: str = "manual"
+    type: str = "ban"
+
+
+class BulkUnbanIn(BaseModel):
+    ids: list[int]
 
 
 class BouncerAddIn(BaseModel):
@@ -58,17 +90,43 @@ def _visible_hosts(db: Session, user: User) -> set[str] | None:
 def list_decisions(
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
-    limit: int = 200,
-) -> list[dict[str, Any]]:
+    page: int = 1,
+    limit: int = 25,
+    search: str | None = None,
+    type_filter: str | None = None,
+) -> dict[str, Any]:
     s = get_settings()
 
     def factory():
         return crowdsec_client.fetch_decisions_sync(db)
 
-    decisions = cache_mod.get_cached("crowdsec:decisions", factory, ttl_seconds=s.crowdsec_cache_ttl_seconds)
+    all_decisions = cache_mod.get_cached("crowdsec:decisions", factory, ttl_seconds=s.crowdsec_cache_ttl_seconds)
     hosts = _visible_hosts(db, user)
-    raw = decisions[:limit] if hosts is None else [d for d in decisions if blob_matches_hosts(d, hosts)][:limit]
-    return _enrich_decisions_with_service(db, raw)
+
+    # Scope filter
+    filtered = all_decisions if hosts is None else [d for d in all_decisions if blob_matches_hosts(d, hosts)]
+
+    # Search / type filters applied server-side
+    if search:
+        q = search.lower()
+        filtered = [
+            d for d in filtered
+            if q in str(d.get("value") or d.get("ip") or "").lower()
+            or q in str(d.get("type") or "").lower()
+            or q in str(d.get("scenario") or d.get("reason") or "").lower()
+        ]
+    if type_filter:
+        filtered = [d for d in filtered if str(d.get("type") or "").lower() == type_filter.lower()]
+
+    total = len(filtered)
+    limit = max(1, min(limit, 500))
+    paged = filtered[(page - 1) * limit: page * limit]
+    return {
+        "total": total,
+        "page": page,
+        "pages": ceil(total / limit) if total else 0,
+        "decisions": _enrich_decisions_with_service(db, paged),
+    }
 
 
 def _enrich_decisions_with_service(db: Session, decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -104,15 +162,72 @@ def ban_ip(
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, Any]:
-    """Manually ban an IP via CrowdSec LAPI (requires watcher credentials + superuser)."""
+    """Manually ban an IP/CIDR via CrowdSec LAPI (requires watcher credentials + superuser)."""
     if not user.is_superuser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser required")
-    result = crowdsec_client.add_decision(db, ip=body.ip, duration=body.duration, reason=body.reason, decision_type=body.type)
+    try:
+        ip_val = _validate_ip_or_cidr(body.ip)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = crowdsec_client.add_decision(db, ip=ip_val, duration=body.duration, reason=body.reason, decision_type=body.type)
     if not result.get("ok"):
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result.get("error", "Unknown error"))
     cache_mod.invalidate_prefix("crowdsec:")
-    log_action(db, user, "ban", target=body.ip, detail=f"duration={body.duration} reason={body.reason}")
+    log_action(db, user, "ban", target=ip_val, detail=f"duration={body.duration} reason={body.reason}")
     return result
+
+
+@router.post("/decisions/bulk")
+def bulk_ban(
+    body: BulkBanIn,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Ban multiple IPs/CIDRs in a single LAPI call (superuser only)."""
+    if not user.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser required")
+    if not body.ips:
+        raise HTTPException(status_code=400, detail="ips list is empty")
+    validated, errors = [], []
+    for raw in body.ips:
+        try:
+            validated.append(_validate_ip_or_cidr(raw))
+        except ValueError as exc:
+            errors.append(str(exc))
+    if not validated:
+        raise HTTPException(status_code=400, detail=f"No valid IPs: {errors}")
+
+    entries = [{"ip": ip, "duration": body.duration, "reason": body.reason, "type": body.type} for ip in validated]
+    result = crowdsec_client.add_decisions(db, entries, default_duration=body.duration,
+                                           default_reason=body.reason, default_type=body.type)
+    if not result.get("ok"):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result.get("error", "Unknown error"))
+    cache_mod.invalidate_prefix("crowdsec:")
+    log_action(db, user, "bulk_ban", detail=f"count={len(validated)} duration={body.duration} ips={','.join(validated[:5])}")
+    return {**result, "invalid": errors}
+
+
+@router.delete("/decisions/bulk")
+def bulk_unban(
+    body: BulkUnbanIn,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Delete multiple CrowdSec decisions (bulk unban, superuser only)."""
+    if not user.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser required")
+    if not body.ids:
+        raise HTTPException(status_code=400, detail="ids list is empty")
+    success, failed = 0, []
+    for decision_id in body.ids:
+        res = crowdsec_client.delete_decision(db, decision_id)
+        if res.get("ok"):
+            success += 1
+        else:
+            failed.append(decision_id)
+    cache_mod.invalidate_prefix("crowdsec:")
+    log_action(db, user, "bulk_unban", detail=f"success={success} failed={len(failed)}")
+    return {"ok": True, "success": success, "failed": failed}
 
 
 @router.delete("/decisions/{decision_id}")

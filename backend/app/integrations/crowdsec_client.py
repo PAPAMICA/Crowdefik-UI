@@ -210,31 +210,121 @@ async def fetch_metrics(db: Session) -> dict[str, Any] | None:
 
 # ── Add decision (manual ban) ─────────────────────────────────
 
-def add_decision(db: Session, ip: str, duration: str = "24h", reason: str = "manual", decision_type: str = "ban") -> dict[str, Any]:
-    """Add a new CrowdSec decision (manual ban). Requires watcher credentials."""
+def _detect_scope(value: str) -> str:
+    """Detect the CrowdSec decision scope from an IP / CIDR / country string."""
+    import ipaddress
+    v = value.strip()
+    try:
+        ipaddress.ip_address(v)
+        return "Ip"
+    except ValueError:
+        pass
+    try:
+        ipaddress.ip_network(v, strict=False)
+        return "Range"
+    except ValueError:
+        pass
+    if len(v) == 2 and v.isalpha():
+        return "Country"
+    return "Ip"
+
+
+def add_decisions(
+    db: Session,
+    entries: list[dict[str, str]],
+    default_duration: str = "24h",
+    default_reason: str = "manual",
+    default_type: str = "ban",
+) -> dict[str, Any]:
+    """
+    Add one or more CrowdSec decisions via POST /v1/alerts (watcher credentials).
+    Each entry: {"ip": "...", "duration"?: "...", "reason"?: "...", "type"?: "..."}
+    Returns {"ok": True, "count": N} or {"ok": False, "error": "..."}.
+    """
     h = _watcher_headers(db)
     if not h:
-        return {"ok": False, "error": "Watcher credentials required to add decisions"}
+        return {"ok": False, "error": "Watcher credentials required to add decisions. Configure machine credentials in Settings."}
     base = _base(db)
-    payload = {
-        "decisions": [{
-            "duration": duration,
+    now = datetime.utcnow().isoformat() + "Z"
+
+    decisions = []
+    for e in entries:
+        ip_val = e.get("ip", "")
+        scope = _detect_scope(ip_val)
+        decisions.append({
+            "duration": e.get("duration", default_duration),
             "origin": "crowdefik",
-            "scenario": reason,
-            "scope": "Ip",
-            "type": decision_type,
-            "value": ip,
-        }]
-    }
-    try:
-        with httpx.Client(timeout=8.0) as client:
-            r = client.post(f"{base}/v1/decisions", headers=h, json=payload)
+            "scenario": e.get("reason", default_reason),
+            "scope": scope,
+            "type": e.get("type", default_type),
+            "value": ip_val,
+        })
+
+    # CrowdSec LAPI expects decisions submitted as part of an alert payload
+    source_val = entries[0]["ip"] if entries else "0.0.0.0"
+    source_ip = source_val.split("/")[0]  # strip CIDR notation for source
+    alerts_payload = [{
+        "capacity": 0,
+        "decisions": decisions,
+        "events": [],
+        "events_count": len(decisions),
+        "labels": {},
+        "leakspeed": "0",
+        "message": f"Manual {default_type} via Crowdefik",
+        "meta": [],
+        "scenario": default_reason,
+        "scenario_hash": "manual",
+        "scenario_version": "",
+        "simulated": False,
+        "source": {"ip": source_ip, "scope": "Ip", "value": source_ip},
+        "startAt": now,
+        "stopAt": now,
+    }]
+
+    def _post(headers: dict) -> httpx.Response:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.post(f"{base}/v1/alerts", headers=headers, json=alerts_payload)
             r.raise_for_status()
-            return {"ok": True, "ip": ip, "duration": duration, "type": decision_type}
+            return r
+
+    try:
+        _post(h)
+        return {"ok": True, "count": len(entries)}
     except httpx.HTTPStatusError as exc:
-        return {"ok": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"}
+        if exc.response.status_code == 401:
+            # JWT may have expired — invalidate and retry once
+            invalidate_jwt_cache(db)
+            h2 = _watcher_headers(db)
+            if h2:
+                try:
+                    _post(h2)
+                    return {"ok": True, "count": len(entries)}
+                except Exception:
+                    pass
+        detail = exc.response.text[:300]
+        return {"ok": False, "error": f"LAPI HTTP {exc.response.status_code}: {detail}"}
     except Exception as exc:
         return {"ok": False, "error": str(exc)[:300]}
+
+
+def add_decision(
+    db: Session,
+    ip: str,
+    duration: str = "24h",
+    reason: str = "manual",
+    decision_type: str = "ban",
+) -> dict[str, Any]:
+    """Add a single CrowdSec decision. Thin wrapper around add_decisions."""
+    result = add_decisions(
+        db,
+        [{"ip": ip, "duration": duration, "reason": reason, "type": decision_type}],
+        default_duration=duration,
+        default_reason=reason,
+        default_type=decision_type,
+    )
+    if result.get("ok"):
+        return {"ok": True, "ip": ip, "duration": duration, "type": decision_type}
+    return result
 
 
 # ── Bouncers & Machines ───────────────────────────────────────
