@@ -447,75 +447,27 @@ export function ServicePage() {
         )}
       </div>
 
-      {/* Timeline + Scenarios + Top IPs */}
-      <div className="grid gap-6 lg:grid-cols-4">
-        {/* Timeline — 2/4 */}
-        <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-indigo-500" />
-              <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                {days === 1 ? 'Activity — last 24h (per hour)' : `Alerts over time — last ${days} days`}
-              </span>
-            </div>
-            <div className="flex items-center gap-3 text-[11px]">
-              <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-indigo-500" />Alerts</span>
-              <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-red-500" />Blocked</span>
-            </div>
-          </div>
-          {loadingOverview ? (
-            <Skeleton className="h-[180px] w-full" />
-          ) : overview?.timeline?.length ? (
-            <ResponsiveContainer width="100%" height={180}>
-              <AreaChart data={overview.timeline} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="svcGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="svcBlockedGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}
-                  tickFormatter={(v: string) => days === 1 ? v : v.slice(5)}
-                  interval={days === 1 ? 3 : 'preserveStartEnd'} />
-                <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={45} tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : String(v)} />
-                <Tooltip
-                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: '#f1f5f9' }} itemStyle={{ color: '#94a3b8' }} />
-                <Area type="monotone" dataKey="alerts" name="Alerts" stroke="#6366f1" strokeWidth={2}
-                  fill="url(#svcGrad)" dot={false} />
-                <Area type="monotone" dataKey="blocked" name="Blocked" stroke="#ef4444" strokeWidth={2}
-                  fill="url(#svcBlockedGrad)" dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex h-[180px] items-center justify-center text-sm text-slate-400">
-              No data for this period
-            </div>
-          )}
-        </div>
-
-        {/* Top scenarios — 1/4 */}
+      {/* Top scenarios + Top attacker IPs — side by side like IpPage */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Top scenarios */}
         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
           <div className="mb-4 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-amber-500" />
             <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Top attack types</span>
           </div>
           {loadingOverview ? (
-            <div className="space-y-2 pt-2">
-              <Skeleton className="mx-auto h-[120px] w-[120px] rounded-full" />
-              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-4 w-full" />)}
+            <div className="flex items-center gap-4 pt-2">
+              <Skeleton className="h-[160px] w-[160px] rounded-full" />
+              <div className="flex-1 space-y-2">
+                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-4 w-full" />)}
+              </div>
             </div>
           ) : overview?.top_scenarios?.length ? (
-            <>
-              <ResponsiveContainer width="100%" height={120}>
+            <div className="flex items-center gap-4">
+              <ResponsiveContainer width={160} height={200}>
                 <PieChart>
                   <Pie data={overview.top_scenarios} dataKey="count" nameKey="scenario"
-                    cx="50%" cy="50%" innerRadius={30} outerRadius={55} paddingAngle={3}>
+                    cx="50%" cy="50%" innerRadius={48} outerRadius={72} paddingAngle={2}>
                     {overview.top_scenarios.map((_, idx) => (
                       <Cell key={idx} fill={SCENARIO_COLORS[idx % SCENARIO_COLORS.length]} />
                     ))}
@@ -525,48 +477,42 @@ export function ServicePage() {
                     formatter={(v, name) => [v, String(name).replace('crowdsecurity/', '')]} />
                 </PieChart>
               </ResponsiveContainer>
-              <div className="mt-3 space-y-1.5">
-                {overview.top_scenarios.slice(0, 5).map((s, idx) => (
-                  <div key={s.scenario} className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="h-2.5 w-2.5 flex-shrink-0 rounded-full"
-                        style={{ background: SCENARIO_COLORS[idx % SCENARIO_COLORS.length] }} />
-                      <span className="truncate text-xs text-slate-600 dark:text-slate-300">
-                        {s.scenario.replace('crowdsecurity/', '')}
-                      </span>
-                    </div>
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">{s.count}</span>
+              <div className="flex-1 min-w-0 space-y-2">
+                {overview.top_scenarios.slice(0, 7).map((s, idx) => (
+                  <div key={s.scenario} className="flex items-center gap-2 text-xs">
+                    <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: SCENARIO_COLORS[idx % SCENARIO_COLORS.length] }} />
+                    <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300" title={s.scenario}>
+                      {s.scenario.replace('crowdsecurity/', '')}
+                    </span>
+                    <span className="flex-shrink-0 font-semibold text-slate-700 dark:text-slate-200">{s.count}</span>
                   </div>
                 ))}
               </div>
-            </>
-          ) : (
-            <div className="flex h-[180px] items-center justify-center text-sm text-slate-400">
-              No attacks recorded
             </div>
+          ) : (
+            <div className="flex h-[200px] items-center justify-center text-sm text-slate-400">No attacks recorded</div>
           )}
         </div>
 
-        {/* Top attacker IPs — 1/4 */}
+        {/* Top attacker IPs */}
         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
-          <div className="mb-3 flex items-center gap-2">
+          <div className="mb-4 flex items-center gap-2">
             <Globe className="h-4 w-4 text-red-500" />
             <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Top attacker IPs</span>
           </div>
           {loadingOverview ? (
-            <div className="space-y-2 pt-2">
-              <Skeleton className="mx-auto h-[110px] w-[110px] rounded-full" />
-              {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-4 w-full" />)}
+            <div className="flex items-center gap-4 pt-2">
+              <Skeleton className="h-[160px] w-[160px] rounded-full" />
+              <div className="flex-1 space-y-2">
+                {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-4 w-full" />)}
+              </div>
             </div>
           ) : (overview?.top_ips?.length ?? 0) > 0 ? (
-            <>
-              <ResponsiveContainer width="100%" height={110}>
+            <div className="flex items-center gap-4">
+              <ResponsiveContainer width={160} height={200}>
                 <PieChart>
-                  <Pie
-                    data={overview!.top_ips.slice(0, 8)}
-                    dataKey="count" nameKey="ip"
-                    cx="50%" cy="50%" innerRadius={28} outerRadius={50} paddingAngle={2}
-                  >
+                  <Pie data={overview!.top_ips.slice(0, 8)} dataKey="count" nameKey="ip"
+                    cx="50%" cy="50%" innerRadius={48} outerRadius={72} paddingAngle={2}>
                     {overview!.top_ips.slice(0, 8).map((_, i) => (
                       <Cell key={i} fill={IP_COLORS[i % IP_COLORS.length]} />
                     ))}
@@ -578,20 +524,66 @@ export function ServicePage() {
                   />
                 </PieChart>
               </ResponsiveContainer>
-              <div className="mt-2 space-y-1.5">
-                {overview!.top_ips.slice(0, 6).map((item, i) => (
-                  <div key={item.ip} className="flex items-center gap-2 text-xs">
+              <div className="flex-1 min-w-0 space-y-2">
+                {overview!.top_ips.slice(0, 8).map((item, i) => (
+                  <div key={item.ip} className="flex items-center gap-2">
                     <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: IP_COLORS[i % IP_COLORS.length] }} />
-                    <span className="flex-shrink-0 w-8 text-right tabular-nums text-slate-400">{item.count}</span>
+                    <span className="flex-shrink-0 w-10 text-right text-[10px] font-bold tabular-nums text-slate-400">{item.count}</span>
                     <IpBadge ip={item.ip} countryCode={item.country_code} score={item.abuse_score} />
                   </div>
                 ))}
               </div>
-            </>
+            </div>
           ) : (
             <p className="py-8 text-center text-sm text-slate-400">No attacker data for this period</p>
           )}
         </div>
+      </div>
+
+      {/* Timeline — full width like IpPage */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700/50 dark:bg-slate-800/60">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-indigo-500" />
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+              {days === 1 ? 'Activity — last 24h (per hour)' : `Alerts over time — last ${days} days`}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-indigo-500" />Alerts</span>
+            <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-4 rounded-full bg-red-500" />Blocked</span>
+          </div>
+        </div>
+        {loadingOverview ? (
+          <Skeleton className="h-[160px] w-full" />
+        ) : overview?.timeline?.length ? (
+          <ResponsiveContainer width="100%" height={160}>
+            <AreaChart data={overview.timeline} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+              <defs>
+                <linearGradient id="svcGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="svcBlockedGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
+                  <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.15)" vertical={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}
+                tickFormatter={(v: string) => days === 1 ? v : v.slice(5)}
+                interval={days === 1 ? 3 : 'preserveStartEnd'} />
+              <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={45}
+                tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : String(v)} />
+              <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+                labelStyle={{ color: '#f1f5f9' }} itemStyle={{ color: '#94a3b8' }} />
+              <Area type="monotone" dataKey="alerts" name="Alerts" stroke="#6366f1" strokeWidth={2} fill="url(#svcGrad)" dot={false} />
+              <Area type="monotone" dataKey="blocked" name="Blocked" stroke="#ef4444" strokeWidth={2} fill="url(#svcBlockedGrad)" dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="flex h-[160px] items-center justify-center text-sm text-slate-400">No data for this period</div>
+        )}
       </div>
 
       {/* Recent alerts */}
