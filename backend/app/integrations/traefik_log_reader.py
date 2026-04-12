@@ -17,17 +17,20 @@ from urllib.parse import unquote
 
 log = logging.getLogger(__name__)
 
-# Number of lines to read from the end of the log file per sync run.
-TAIL_LINES = 50_000
-# Only keep log entries from the last N hours (WAF alerts are synced quickly).
-LOOKBACK_HOURS = 24
+# ── Tuning constants ──────────────────────────────────────────────────────────
+# Tail enough lines to cover 3 days of typical traffic on a busy server.
+TAIL_LINES = 200_000
+# Correlation window: WAF alerts may arrive minutes after the request; allow 5 min.
+MATCH_WINDOW_SECONDS = 300
+# Keep log entries up to 72 hours for backfill of older alerts.
+LOOKBACK_HOURS = 72
 
 # ── Index cache ───────────────────────────────────────────────────────────────
-# The index is expensive to build (parse 50k lines). Cache it for INDEX_TTL
+# The index is expensive to build (parse 200 k lines). Cache it for INDEX_TTL
 # seconds so that interactive "enrich" button clicks reuse the same index
 # instead of re-reading the file on every request.
 
-_INDEX_TTL = 60  # seconds
+_INDEX_TTL = 120  # seconds — refreshed automatically on each sync cycle
 _index_cache: dict[str, tuple[float, dict]] = {}  # path → (built_at, index)
 _index_lock = threading.Lock()
 
@@ -63,7 +66,7 @@ def _tail_file(path: Path, n: int) -> list[str]:
             if file_size == 0:
                 return []
 
-            chunk_size = 8192
+            chunk_size = 65536  # larger chunks for faster tail on big files
             buf = b""
             pos = file_size
 
@@ -83,7 +86,25 @@ def _tail_file(path: Path, n: int) -> list[str]:
         return []
 
 
-def build_ip_host_index(log_path: Path) -> dict[str, list[dict[str, Any]]]:
+def _tail_docker(container: str, log_path_in_container: str, n: int) -> list[str]:
+    """Read the last *n* lines of a log file inside a Docker container via exec."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["docker", "exec", container, "tail", "-n", str(n), log_path_in_container],
+            capture_output=True, text=True, timeout=15,
+        )
+        return [l for l in result.stdout.splitlines() if l.strip()]
+    except Exception as exc:
+        log.debug("Docker exec tail %s:%s failed: %s", container, log_path_in_container, exc)
+        return []
+
+
+def build_ip_host_index(
+    log_path: Path | None,
+    docker_container: str | None = None,
+    docker_log_paths: list[str] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
     """
     Parse the last TAIL_LINES lines of a Traefik JSON access.log.
 
@@ -91,16 +112,38 @@ def build_ip_host_index(log_path: Path) -> dict[str, list[dict[str, Any]]]:
         { "1.2.3.4": [{"time": datetime, "host": "example.com", "path": "/foo"}, …] }
 
     Only entries from the last LOOKBACK_HOURS hours are kept.
+    Falls back to Docker exec if the file path is unavailable.
+
+    The index also maps X-Forwarded-For IPs so it can match alerts from
+    upstream clients that sent requests through a proxy.
     """
-    if not log_path.exists():
-        log.debug("Traefik log not found at %s", log_path)
+    raw_lines: list[str] = []
+    source_desc = "unavailable"
+
+    if log_path and log_path.exists():
+        raw_lines = _tail_file(log_path, TAIL_LINES)
+        source_desc = str(log_path)
+    elif docker_container:
+        candidate_paths = docker_log_paths or [
+            "/var/log/traefik/access.log",
+            "/var/log/access.log",
+        ]
+        for cp in candidate_paths:
+            lines = _tail_docker(docker_container, cp, TAIL_LINES)
+            if lines:
+                raw_lines = lines
+                source_desc = f"docker:{docker_container}:{cp}"
+                break
+
+    if not raw_lines:
+        log.debug("Traefik log unavailable (source=%s)", source_desc)
         return {}
 
     cutoff = datetime.utcnow() - timedelta(hours=LOOKBACK_HOURS)
     index: dict[str, list[dict[str, Any]]] = defaultdict(list)
     skipped = 0
 
-    for raw in _tail_file(log_path, TAIL_LINES):
+    for raw in raw_lines:
         try:
             entry = json.loads(raw)
         except json.JSONDecodeError:
@@ -112,7 +155,7 @@ def build_ip_host_index(log_path: Path) -> dict[str, list[dict[str, Any]]]:
             entry.get("ClientHost")
             or (entry.get("ClientAddr") or "").split(":")[0]
         )
-        host = entry.get("RequestHost") or entry.get("RequestAddr") or ""
+        host = (entry.get("RequestHost") or entry.get("RequestAddr") or "").lower().split(":")[0]
         path = entry.get("RequestPath") or entry.get("RequestURI") or ""
         time_str = entry.get("StartUTC") or entry.get("time") or ""
 
@@ -127,10 +170,24 @@ def build_ip_host_index(log_path: Path) -> dict[str, list[dict[str, Any]]]:
         if ts < cutoff:
             continue
 
-        index[client_ip].append({"time": ts, "host": host, "path": path})
+        record = {"time": ts, "host": host, "path": path}
+        index[client_ip].append(record)
+
+        # Also index X-Forwarded-For / X-Real-Ip headers so alerts from proxied
+        # clients can be matched even when CrowdSec sees the original client IP.
+        for xff_header in ("X-Forwarded-For", "x-forwarded-for", "X-Real-Ip"):
+            xff = entry.get(xff_header) or ""
+            if xff:
+                # X-Forwarded-For can be comma-separated ("ip1, ip2, ip3")
+                for xff_ip in [x.strip() for x in xff.split(",") if x.strip()]:
+                    if xff_ip != client_ip:
+                        index[xff_ip].append(record)
 
     total = sum(len(v) for v in index.values())
-    log.debug("Traefik log index: %d IPs, %d entries (skipped %d)", len(index), total, skipped)
+    log.debug(
+        "Traefik log index built from %s: %d IPs, %d entries (skipped %d non-JSON)",
+        source_desc, len(index), total, skipped,
+    )
     return dict(index)
 
 
@@ -139,17 +196,18 @@ def find_host_for_alert(
     source_ip: str,
     alert_time: datetime,
     target_uri: str | None = None,
-    window_seconds: int = 60,
+    window_seconds: int = MATCH_WINDOW_SECONDS,
 ) -> str | None:
     """
     Look up the Traefik log index to find which host was targeted by this WAF alert.
 
-    Match strategy:
-    1. Same client IP as the attacker (source_ip).
+    Match strategy (in order of precision):
+    1. Same client IP as the attacker (source_ip) — or via X-Forwarded-For (indexed).
     2. Request timestamp within *window_seconds* of the alert's start_at.
     3. If *target_uri* (request path) is given, prefer log entries whose path
        matches after URL-decoding (more precise when the IP hit multiple hosts).
     4. Fall back to the chronologically closest matching entry.
+    5. If multiple hosts match, pick the most frequent one in the candidate window.
 
     Returns the target hostname or None if no match is found.
     """
@@ -164,7 +222,7 @@ def find_host_for_alert(
     if not candidates:
         return None
 
-    # Prefer entries whose path matches the alert's target_uri
+    # Strategy 1: exact path match (highest confidence)
     if target_uri:
         decoded_uri = unquote(target_uri)
         uri_base = decoded_uri.split("?")[0]
@@ -176,6 +234,19 @@ def find_host_for_alert(
             closest = min(path_matches, key=lambda e: abs((e["time"] - alert_time).total_seconds()))
             return closest["host"]
 
-    # Fall back to the chronologically closest entry
+    # Strategy 2: if only one host in the window, return it (no ambiguity)
+    hosts_in_window = {e["host"] for e in candidates}
+    if len(hosts_in_window) == 1:
+        return candidates[0]["host"]
+
+    # Strategy 3: most frequently seen host in the window
+    from collections import Counter
+    host_counts = Counter(e["host"] for e in candidates)
+    top_host, top_count = host_counts.most_common(1)[0]
+    # Only use most-frequent if it's clearly dominant (>50% of candidates)
+    if top_count >= len(candidates) * 0.5:
+        return top_host
+
+    # Strategy 4: chronologically closest entry
     closest = min(candidates, key=lambda e: abs((e["time"] - alert_time).total_seconds()))
     return closest["host"]

@@ -462,48 +462,49 @@ def enrich_alert(
     db: Annotated[Session, Depends(get_db)],
     _user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, str | None]:
-    """Force target_host discovery for a single alert via Traefik log correlation."""
+    """Force target_host discovery for a single alert.
+
+    Strategy (in order):
+    1. Re-parse raw alert JSON for http_host / context fields.
+    2. IP heuristic: most common host for this IP in the last 7 days.
+    3. Traefik log correlation (file path or Docker exec fallback).
+
+    `log_enrichment_attempted` is ONLY set when the log was actually read —
+    never when the log was unavailable — so the background sync keeps retrying.
+    """
     from app.models import StoredAlert
-    from app.services.sync_service import _extract_target_host
-    from app.settings import get_settings
+    from app.services.sync_service import _extract_target_host, _build_log_index, _enrich_by_ip_heuristic
+    from datetime import datetime as _dt
 
     row = db.query(StoredAlert).filter(StoredAlert.id == alert_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Alert not found")
 
-    # 1. Try cheap in-memory extraction from raw alert JSON first
+    # Step 1: cheap in-memory extraction from raw alert JSON
     try:
         raw = _json.loads(row.raw_json)
     except Exception:
         raw = {}
     host = _extract_target_host(raw)
-
     if host:
         row.target_host = host
         db.commit()
-        return {"id": str(alert_id), "target_host": host}
+        return {"id": str(alert_id), "target_host": host, "method": "json_context"}
 
-    # 2. Traefik log correlation — resolve the access log path from DB first,
-    #    then fall back to the env-var setting (same priority as logs_api).
-    from app.integrations.instance_settings import get_or_create_instance_settings
-    from pathlib import Path as _Path
+    # Step 2: IP heuristic (fast DB query — no I/O)
+    _enrich_by_ip_heuristic(db, [row])
+    db.refresh(row)
+    if row.target_host:
+        return {"id": str(alert_id), "target_host": row.target_host, "method": "ip_heuristic"}
 
-    s = get_settings()
-    _inst = get_or_create_instance_settings(db)
-    _db_log = getattr(_inst, "log_path_access", None)
-    log_path: _Path | None = _Path(_db_log) if _db_log else s.traefik_log_path
+    # Step 3: Traefik log correlation (file + Docker exec fallback)
+    from app.integrations.traefik_log_reader import find_host_for_alert
 
-    if not log_path or not log_path.exists():
-        # Log not available — do NOT mark as attempted so the button stays visible
-        # (the user might mount the log file or configure its path later).
-        return {"id": str(alert_id), "target_host": None}
+    index = _build_log_index(db)
 
-    # 3. Use the cached index (built at most once every 60 s) to avoid
-    #    re-reading 50 k lines of access.log on every button click.
-    from app.integrations.traefik_log_reader import get_cached_index, find_host_for_alert
-    from datetime import datetime as _dt
-
-    index = get_cached_index(log_path)
+    if not index:
+        # Log unavailable — do NOT mark as attempted so background sync retries.
+        return {"id": str(alert_id), "target_host": None, "method": "log_unavailable"}
 
     target_uri: str | None = None
     try:
@@ -518,7 +519,8 @@ def enrich_alert(
     host = find_host_for_alert(index, row.source_ip or "", alert_time, target_uri)
 
     row.target_host = host
-    row.log_enrichment_attempted = True  # found or not — don't retry via background sync
+    # Mark as attempted only now that we have actually read the log index.
+    row.log_enrichment_attempted = True
     db.commit()
 
-    return {"id": str(alert_id), "target_host": host}
+    return {"id": str(alert_id), "target_host": host, "method": "log_correlation"}
