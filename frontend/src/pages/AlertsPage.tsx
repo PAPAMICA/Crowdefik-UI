@@ -1,7 +1,7 @@
 import {
   AlertTriangle, ChevronLeft, ChevronRight, Clock,
   Download, ExternalLink, Filter, Info, Loader2,
-  RefreshCw, Search, Settings, ShieldBan, ShieldOff, X,
+  RefreshCw, Search, Settings, ShieldBan, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
