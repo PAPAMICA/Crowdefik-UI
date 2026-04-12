@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { CountryFlag } from '../components/CountryFlag'
@@ -12,6 +13,55 @@ import { IpBadge } from '../components/IpBadge'
 import { useToast } from '../components/Toast'
 import { usePagePerf } from '../hooks/usePagePerf'
 import { faviconUrl } from '../utils/favicon'
+
+// ── Donut helpers ──────────────────────────────────────────────────────────────
+
+const DONUT_COLORS = ['#8b5cf6','#6366f1','#3b82f6','#06b6d4','#10b981','#f59e0b','#f97316','#ef4444','#ec4899','#a855f7']
+
+type DonutEntry = { name: string; value: number }
+
+function MiniDonut({ title, data, renderLabel }: {
+  title: string
+  data: DonutEntry[]
+  renderLabel?: (e: DonutEntry) => React.ReactNode
+}) {
+  if (!data.length) return null
+  const top = data.slice(0, 8)
+  const total = top.reduce((s, e) => s + e.value, 0)
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/60">
+      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{title}</p>
+      <div className="flex items-center gap-4">
+        <div className="h-[110px] w-[110px] shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={top} dataKey="value" cx="50%" cy="50%" innerRadius={32} outerRadius={52} paddingAngle={2} strokeWidth={0}>
+                {top.map((_, i) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
+              </Pie>
+              <Tooltip
+                contentStyle={{ background: 'var(--tw-bg, #1e293b)', border: 'none', borderRadius: 8, fontSize: 12 }}
+                formatter={(v: unknown) => [String(v ?? ''), '']}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <ul className="min-w-0 flex-1 space-y-1 text-xs">
+          {top.map((e, i) => (
+            <li key={i} className="flex items-center gap-1.5 truncate">
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: DONUT_COLORS[i % DONUT_COLORS.length] }} />
+              <span className="flex-1 truncate text-slate-700 dark:text-slate-300">
+                {renderLabel ? renderLabel(e) : e.name}
+              </span>
+              <span className="ml-auto shrink-0 tabular-nums text-slate-400">
+                {total > 0 ? `${Math.round((e.value / total) * 100)}%` : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
 
 // ── CSV export ─────────────────────────────────────────────────────────────────
 
@@ -231,6 +281,25 @@ export function DecisionsPage() {
     return Array.from(s).sort()
   }, [data])
 
+  // Distribution charts
+  const scenarioDist = useMemo<DonutEntry[]>(() => {
+    const m = new Map<string, number>()
+    ;(data?.decisions ?? []).forEach((d) => { const k = String(d.scenario ?? d.reason ?? '').replace('crowdsecurity/', ''); if (k) m.set(k, (m.get(k) ?? 0) + 1) })
+    return Array.from(m.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
+  }, [data])
+
+  const ipDist = useMemo<DonutEntry[]>(() => {
+    const m = new Map<string, number>()
+    ;(data?.decisions ?? []).forEach((d) => { const ip = String(d.value ?? d.ip ?? ''); if (ip) m.set(ip, (m.get(ip) ?? 0) + 1) })
+    return Array.from(m.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
+  }, [data])
+
+  const serviceDist = useMemo<DonutEntry[]>(() => {
+    const m = new Map<string, number>()
+    ;(data?.decisions ?? []).forEach((d) => { if (d._target_host) m.set(d._target_host, (m.get(d._target_host) ?? 0) + 1) })
+    return Array.from(m.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
+  }, [data])
+
   async function handleBan() {
     if (!banIp.trim()) return
     setBanning(true)
@@ -381,6 +450,24 @@ export function DecisionsPage() {
           </select>
         </div>
       </div>
+
+      {/* Distribution charts */}
+      {rows.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <MiniDonut title="Scenario distribution" data={scenarioDist} />
+          <MiniDonut title="Source IP distribution" data={ipDist}
+            renderLabel={(e) => <IpBadge ip={e.name} compact />}
+          />
+          <MiniDonut title="Target service distribution" data={serviceDist}
+            renderLabel={(e) => (
+              <span className="flex items-center gap-1.5 truncate">
+                <img src={faviconUrl(e.name)} alt="" className="h-3.5 w-3.5 rounded-sm" onError={(ev) => { (ev.target as HTMLImageElement).style.display = 'none' }} />
+                <span className="truncate">{e.name}</span>
+              </span>
+            )}
+          />
+        </div>
+      )}
 
       {/* Bulk action bar */}
       {selectedIds.size > 0 && me?.is_superuser && (
