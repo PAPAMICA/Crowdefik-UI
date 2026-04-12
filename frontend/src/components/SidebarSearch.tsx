@@ -134,7 +134,9 @@ export function SidebarSearch() {
                     <div className="truncate font-mono text-xs text-slate-200">{s.host}</div>
                   </div>
                   {s.crowdsec && (
-                    <Shield className="h-3 w-3 shrink-0 text-emerald-400" title="CrowdSec active" />
+                    <span title="CrowdSec active">
+                      <Shield className="h-3 w-3 shrink-0 text-emerald-400" />
+                    </span>
                   )}
                 </button>
               ))}
