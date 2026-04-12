@@ -25,6 +25,7 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { useTheme } from '../theme'
+import { SidebarSearch } from './SidebarSearch'
 
 const STORAGE_KEY_SEEN = 'crowdefik:alerts_seen_count'
 const STORAGE_KEY_LATEST = 'crowdefik:alerts_latest_count'
@@ -130,6 +131,9 @@ export function Sidebar({ collapsed, onToggle }: Props) {
           </div>
         )}
       </div>
+
+      {/* Search — only when expanded */}
+      {!collapsed && <SidebarSearch />}
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-3 py-4">

@@ -161,8 +161,37 @@ def check_ip(
     ip = (body.get("ip") or "").strip()
     if not ip:
         raise HTTPException(status_code=400, detail="ip required")
-    protected = is_ip_allowlisted(db, ip)
-    return {"ip": ip, "protected": protected}
+
+    now = datetime.utcnow()
+    rows = db.query(Allowlist).filter(Allowlist.active == True).all()  # noqa: E712
+    try:
+        ip_obj = ipaddress.ip_address(ip)
+    except ValueError:
+        return {"ip": ip, "protected": False, "entry": None}
+
+    for row in rows:
+        if row.expires_at and row.expires_at < now:
+            continue
+        try:
+            matched = False
+            if "/" in row.value:
+                matched = ip_obj in ipaddress.ip_network(row.value, strict=False)
+            else:
+                matched = ipaddress.ip_address(row.value) == ip_obj
+            if matched:
+                return {
+                    "ip": ip,
+                    "protected": True,
+                    "entry": {
+                        "id": row.id,
+                        "reason": row.reason,
+                        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+                    },
+                }
+        except ValueError:
+            continue
+
+    return {"ip": ip, "protected": False, "entry": None}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

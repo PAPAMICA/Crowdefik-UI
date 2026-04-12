@@ -1,6 +1,6 @@
 import {
-  AlertTriangle, ArrowLeft, Ban, Clock, Globe,
-  RefreshCw, Shield, ShieldBan, ShieldCheck, Trash2,
+  AlertTriangle, ArrowLeft, Ban, CheckCircle2, Clock, Globe,
+  RefreshCw, Shield, ShieldBan, ShieldCheck, ShieldOff, Trash2,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
@@ -98,6 +98,14 @@ export function IpPage() {
   const [banDuration, setBanDuration] = useState('24h')
   const [banReason, setBanReason] = useState('manual')
 
+  // Allowlist state
+  const [allowlistEntry, setAllowlistEntry] = useState<{ id: number; reason: string | null; expires_at: string | null } | null>(null)
+  const [allowlistLoading, setAllowlistLoading] = useState(false)
+  const [allowlistModal, setAllowlistModal] = useState(false)
+  const [allowlistReason, setAllowlistReason] = useState('manual whitelist')
+  const [allowlistDuration, setAllowlistDuration] = useState<string>('permanent')
+  const [removeAllowlistModal, setRemoveAllowlistModal] = useState(false)
+
   useEffect(() => {
     setAllAlerts([])
     setAlertPage(1)
@@ -115,6 +123,16 @@ export function IpPage() {
       }),
       apiFetch(`/api/ip/${encodeURIComponent(ip)}/decisions`).then(async (r) => {
         if (r.ok) setDecisions(await r.json() as IpDecision[])
+      }),
+      // Check allowlist status
+      apiFetch('/api/crowdsec/allowlist/check', {
+        method: 'POST',
+        body: JSON.stringify({ ip }),
+      }).then(async (r) => {
+        if (r.ok) {
+          const data = await r.json() as { protected: boolean; entry?: { id: number; reason: string | null; expires_at: string | null } }
+          setAllowlistEntry(data.protected && data.entry ? data.entry : null)
+        }
       }),
     ]).finally(() => setLoadingInfo(false))
   }, [ip])
@@ -157,6 +175,57 @@ export function IpPage() {
       }
     } finally {
       setBanning(false)
+    }
+  }
+
+  async function handleWhitelist() {
+    if (!ip) return
+    setAllowlistLoading(true)
+    try {
+      const hoursMap: Record<string, number | undefined> = {
+        permanent: undefined,
+        '24h': 24,
+        '168h': 168,
+        '720h': 720,
+        '8760h': 8760,
+      }
+      const hours = hoursMap[allowlistDuration]
+      const res = await apiFetch('/api/crowdsec/allowlist', {
+        method: 'POST',
+        body: JSON.stringify({
+          value: ip,
+          reason: allowlistReason || 'manual whitelist',
+          expires_hours: hours ?? null,
+        }),
+      })
+      if (res.ok) {
+        const data = await res.json() as { id: number; reason: string | null; expires_at: string | null }
+        setAllowlistEntry(data)
+        setAllowlistModal(false)
+        addToast(`${ip} added to allowlist`, 'success')
+      } else {
+        const err = await res.json().catch(() => ({}))
+        addToast((err as { detail?: string }).detail ?? 'Allowlist failed', 'error')
+      }
+    } finally {
+      setAllowlistLoading(false)
+    }
+  }
+
+  async function handleRemoveAllowlist() {
+    if (!allowlistEntry) return
+    setAllowlistLoading(true)
+    try {
+      const res = await apiFetch(`/api/crowdsec/allowlist/${allowlistEntry.id}`, { method: 'DELETE' })
+      if (res.ok || res.status === 204) {
+        setAllowlistEntry(null)
+        setRemoveAllowlistModal(false)
+        addToast(`${ip ?? ''} removed from allowlist`, 'success')
+      } else {
+        addToast('Remove allowlist failed', 'error')
+      }
+    } finally {
+      setAllowlistLoading(false)
     }
   }
 
@@ -206,6 +275,16 @@ export function IpPage() {
                   Score {score}%
                 </span>
               )}
+              {decisions.length > 0 && (
+                <span className="rounded-full bg-red-500/15 px-2.5 py-1 text-xs font-semibold text-red-700 dark:text-red-400 flex items-center gap-1">
+                  <ShieldBan className="h-3 w-3" /> Banned
+                </span>
+              )}
+              {allowlistEntry && (
+                <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" /> Allowlisted
+                </span>
+              )}
               {abuse?.isTor && (
                 <span className="rounded-full bg-purple-500/15 px-2.5 py-1 text-xs font-semibold text-purple-700 dark:text-purple-300">
                   Tor exit
@@ -219,10 +298,23 @@ export function IpPage() {
         </div>
         <div className="flex items-center gap-2">
           {me?.is_superuser && (
-            <button type="button" onClick={() => setBanModal(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">
-              <ShieldBan className="h-4 w-4" /> Ban IP
-            </button>
+            <>
+              {allowlistEntry ? (
+                <button type="button" onClick={() => setRemoveAllowlistModal(true)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400">
+                  <ShieldOff className="h-4 w-4" /> Remove from Allowlist
+                </button>
+              ) : (
+                <button type="button" onClick={() => setAllowlistModal(true)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400">
+                  <ShieldCheck className="h-4 w-4" /> Whitelist
+                </button>
+              )}
+              <button type="button" onClick={() => setBanModal(true)}
+                className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">
+                <ShieldBan className="h-4 w-4" /> Ban IP
+              </button>
+            </>
           )}
           <button type="button" onClick={() => { setLoadingInfo(true); void apiFetch(`/api/ip/${encodeURIComponent(ip)}`).then(async (r) => { if (r.ok) setInfo(await r.json() as IpInfo) }).finally(() => setLoadingInfo(false)) }}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
@@ -530,6 +622,80 @@ export function IpPage() {
                   {banning ? 'Banning…' : 'Confirm ban'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Whitelist modal */}
+      {allowlistModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setAllowlistModal(false)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              <span className="font-semibold text-slate-900 dark:text-white">Add to Allowlist</span>
+              <code className="ml-auto font-mono text-xs text-slate-500">{ip}</code>
+            </div>
+            <div className="space-y-4 p-5">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">Reason</label>
+                <input type="text" value={allowlistReason} onChange={(e) => setAllowlistReason(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">Duration</label>
+                <select value={allowlistDuration} onChange={(e) => setAllowlistDuration(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  <option value="permanent">Permanent</option>
+                  <option value="24h">24 hours</option>
+                  <option value="168h">1 week</option>
+                  <option value="720h">1 month</option>
+                  <option value="8760h">1 year</option>
+                </select>
+              </div>
+              <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400">
+                This IP will be excluded from automatic bans by Crowdefik.
+              </p>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setAllowlistModal(false)}
+                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  Cancel
+                </button>
+                <button type="button" onClick={() => void handleWhitelist()} disabled={allowlistLoading}
+                  className="flex-1 rounded-xl bg-emerald-600 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">
+                  {allowlistLoading ? 'Adding…' : 'Add to Allowlist'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove allowlist confirm modal */}
+      {removeAllowlistModal && allowlistEntry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setRemoveAllowlistModal(false)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <ShieldOff className="h-4 w-4 text-amber-500" />
+              <span className="font-semibold text-slate-900 dark:text-white">Remove from Allowlist</span>
+            </div>
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              Remove <code className="font-mono text-xs">{ip}</code> from the allowlist?
+              {allowlistEntry.reason && (
+                <span className="block mt-1 text-xs text-slate-400">Reason: {allowlistEntry.reason}</span>
+              )}
+            </p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setRemoveAllowlistModal(false)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                Cancel
+              </button>
+              <button type="button" onClick={() => void handleRemoveAllowlist()} disabled={allowlistLoading}
+                className="flex-1 rounded-xl bg-amber-600 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-60">
+                {allowlistLoading ? 'Removing…' : 'Remove'}
+              </button>
             </div>
           </div>
         </div>
