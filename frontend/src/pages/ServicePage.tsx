@@ -11,6 +11,7 @@ import {
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
+import { ScenarioBadge } from '../components/ScenarioBadge'
 import { Skeleton, SkeletonCard, SkeletonRow } from '../components/Skeleton'
 import { useToast } from '../components/Toast'
 import { usePagePerf } from '../hooks/usePagePerf'
@@ -481,9 +482,7 @@ export function ServicePage() {
                 {overview.top_scenarios.slice(0, 7).map((s, idx) => (
                   <div key={s.scenario} className="flex items-center gap-2 text-xs">
                     <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: SCENARIO_COLORS[idx % SCENARIO_COLORS.length] }} />
-                    <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300" title={s.scenario}>
-                      {s.scenario.replace('crowdsecurity/', '')}
-                    </span>
+                    <ScenarioBadge scenario={s.scenario} icon={false} className="flex-1 min-w-0" />
                     <span className="flex-shrink-0 font-semibold text-slate-700 dark:text-slate-200">{s.count}</span>
                   </div>
                 ))}
@@ -608,10 +607,7 @@ export function ServicePage() {
               {overview?.recent_alerts?.length ? overview.recent_alerts.map((a) => (
                 <tr key={a.id} className="hover:bg-slate-50/50 dark:hover:bg-white/5">
                   <td className="px-4 py-3">
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-700 dark:text-red-400">
-                      <AlertTriangle className="h-3 w-3" />
-                      {String(a.scenario ?? '').replace('crowdsecurity/', '') || '—'}
-                    </span>
+                    <ScenarioBadge scenario={String(a.scenario ?? '')} className="py-1" />
                   </td>
                   <td className="px-4 py-3">
                     {a.source_ip ? <IpBadge ip={a.source_ip} /> : <span className="text-xs text-slate-400">—</span>}

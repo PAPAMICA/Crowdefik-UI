@@ -9,6 +9,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
+import { ScenarioBadge } from '../components/ScenarioBadge'
 import { useToast } from '../components/Toast'
 import { usePagePerf } from '../hooks/usePagePerf'
 import { faviconUrl } from '../utils/favicon'
@@ -258,10 +259,7 @@ function AlertDetailPanel({ alert, onClose }: { alert: Alert; onClose: () => voi
           {/* Scenario */}
           <div>
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Scenario</div>
-            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${scenarioColor(scenario)}`}>
-              <AlertTriangle className="h-3.5 w-3.5" />
-              {scenario || '—'}
-            </span>
+            <ScenarioBadge scenario={scenario} className="px-3 py-1 text-xs" />
           </div>
 
           {/* IP + Links */}
@@ -671,9 +669,7 @@ export function AlertsPage() {
                       </td>
                     )}
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${scenarioColor(scenario)}`}>
-                        <AlertTriangle className="h-3 w-3" />{label || '—'}
-                      </span>
+                      <ScenarioBadge scenario={scenario} className="py-1" />
                     </td>
                     <td className="px-4 py-3">
                       {ip ? <IpBadge ip={ip} /> : <span className="text-xs text-slate-400">—</span>}

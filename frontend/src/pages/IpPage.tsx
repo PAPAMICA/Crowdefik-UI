@@ -11,6 +11,7 @@ import {
 import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { CountryFlag } from '../components/CountryFlag'
+import { ScenarioBadge } from '../components/ScenarioBadge'
 import { Skeleton, SkeletonCard } from '../components/Skeleton'
 import { useToast } from '../components/Toast'
 import { faviconUrl } from '../utils/favicon'
@@ -620,10 +621,7 @@ export function IpPage() {
                 : (alertsData?.alerts ?? []).map((a) => (
                   <tr key={a.id} className="hover:bg-slate-50/50 dark:hover:bg-white/5">
                     <td className="px-4 py-2.5">
-                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
-                        <AlertTriangle className="h-3 w-3 shrink-0" />
-                        {a.scenario.replace('crowdsecurity/', '')}
-                      </span>
+                      <ScenarioBadge scenario={a.scenario} />
                     </td>
                     <td className="px-4 py-2.5">
                       {a.target_host ? (
@@ -699,8 +697,8 @@ export function IpPage() {
                     <td className="px-4 py-2.5">
                       <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-400">{d.type ?? 'ban'}</span>
                     </td>
-                    <td className="max-w-[160px] truncate px-4 py-2.5 text-xs text-slate-500" title={d.scenario ?? ''}>
-                      {d.scenario ? d.scenario.replace('crowdsecurity/', '') : '—'}
+                    <td className="px-4 py-2.5">
+                      <ScenarioBadge scenario={d.scenario ?? ''} icon={false} />
                     </td>
                     <td className="px-4 py-2.5 text-xs text-slate-500">{d.duration ?? '—'}</td>
                     <td className="px-4 py-2.5 text-xs text-slate-500">

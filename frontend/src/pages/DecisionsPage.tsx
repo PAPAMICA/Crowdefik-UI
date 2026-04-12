@@ -10,6 +10,7 @@ import { apiFetch } from '../api'
 import { useAuth } from '../auth'
 import { CountryFlag } from '../components/CountryFlag'
 import { IpBadge } from '../components/IpBadge'
+import { ScenarioBadge } from '../components/ScenarioBadge'
 import { useToast } from '../components/Toast'
 import { usePagePerf } from '../hooks/usePagePerf'
 import { faviconUrl } from '../utils/favicon'
@@ -121,15 +122,6 @@ function extractCountry(d: Decision): string {
   return typeof cc === 'string' ? cc.toUpperCase() : ''
 }
 
-function ScenarioBadge({ scenario }: { scenario: string }) {
-  const label = scenario.replace(/^crowdsecurity\//, '').replace(/^firehol\//, '')
-  return (
-    <span className={`inline-flex max-w-[200px] items-center truncate rounded-full border px-2.5 py-0.5 text-xs font-medium ${scenarioColor(scenario)}`}
-      title={scenario}>
-      {label || '—'}
-    </span>
-  )
-}
 
 function TypeBadge({ type }: { type: string }) {
   const t = type.toLowerCase()

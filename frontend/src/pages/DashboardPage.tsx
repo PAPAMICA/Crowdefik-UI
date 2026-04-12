@@ -8,6 +8,7 @@ import {
 import { apiFetch, getToken, wsDashboardUrl } from '../api'
 import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
+import { ScenarioBadge } from '../components/ScenarioBadge'
 import { Skeleton, SkeletonCard } from '../components/Skeleton'
 import { setLatestAlertCount } from '../components/Sidebar'
 import { usePagePerf } from '../hooks/usePagePerf'
@@ -118,7 +119,7 @@ export function DashboardPage() {
   }, [me?.id])
 
   const topTypes = useMemo(
-    () => (summary?.attack_types ?? []).map((a) => ({ ...a, type: a.type.replace('crowdsecurity/', '') })).slice(0, 8),
+    () => (summary?.attack_types ?? []).slice(0, 8),
     [summary],
   )
 
@@ -226,7 +227,7 @@ export function DashboardPage() {
                 {topTypes.slice(0, 7).map((t, i) => (
                   <div key={t.type} className="flex items-center gap-2 text-xs">
                     <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
-                    <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300" title={t.type}>{t.type}</span>
+                    <ScenarioBadge scenario={t.type} icon={false} className="flex-1 min-w-0 max-w-none border-0 bg-transparent p-0 text-slate-600 dark:text-slate-300 hover:text-violet-600 dark:hover:text-violet-400" />
                     <span className="flex-shrink-0 font-semibold text-slate-700 dark:text-slate-200">{t.count}</span>
                   </div>
                 ))}
