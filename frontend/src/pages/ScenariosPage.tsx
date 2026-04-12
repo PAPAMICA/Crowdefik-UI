@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { Skeleton } from '../components/Skeleton'
-import { getAttackInfo, parseWafAnomalyInfo, SEVERITY_CLASSES } from '../utils/attackKnowledge'
+import { getAttackInfo, SEVERITY_CLASSES } from '../utils/attackKnowledge'
 
 type ScenarioRow = {
   scenario: string
