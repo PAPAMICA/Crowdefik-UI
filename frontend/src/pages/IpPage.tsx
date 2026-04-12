@@ -98,6 +98,8 @@ export function IpPage() {
   const [banDuration, setBanDuration] = useState('24h')
   const [banReason, setBanReason] = useState('manual')
 
+  const [unbanAllModal, setUnbanAllModal] = useState(false)
+
   // Allowlist state
   const [allowlistEntry, setAllowlistEntry] = useState<{ id: number; reason: string | null; expires_at: string | null } | null>(null)
   const [allowlistLoading, setAllowlistLoading] = useState(false)
@@ -175,6 +177,24 @@ export function IpPage() {
       }
     } finally {
       setBanning(false)
+    }
+  }
+
+  async function handleUnbanAll() {
+    setUnbanning(true)
+    try {
+      await Promise.all(
+        decisions.map((d) =>
+          apiFetch(`/api/crowdsec/decisions/${d.id}`, { method: 'DELETE' })
+        )
+      )
+      addToast(`All decisions deleted for ${ip ?? ''}`, 'success')
+      setDecisions([])
+    } catch {
+      addToast('Unban failed', 'error')
+    } finally {
+      setUnbanning(false)
+      setUnbanAllModal(false)
     }
   }
 
@@ -310,10 +330,17 @@ export function IpPage() {
                   <ShieldCheck className="h-4 w-4" /> Whitelist
                 </button>
               )}
-              <button type="button" onClick={() => setBanModal(true)}
-                className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">
-                <ShieldBan className="h-4 w-4" /> Ban IP
-              </button>
+              {decisions.length > 0 ? (
+                <button type="button" onClick={() => setUnbanAllModal(true)} disabled={unbanning}
+                  className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60">
+                  <ShieldCheck className="h-4 w-4" /> Unban IP
+                </button>
+              ) : (
+                <button type="button" onClick={() => setBanModal(true)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">
+                  <ShieldBan className="h-4 w-4" /> Ban IP
+                </button>
+              )}
             </>
           )}
           <button type="button" onClick={() => { setLoadingInfo(true); void apiFetch(`/api/ip/${encodeURIComponent(ip)}`).then(async (r) => { if (r.ok) setInfo(await r.json() as IpInfo) }).finally(() => setLoadingInfo(false)) }}
@@ -622,6 +649,33 @@ export function IpPage() {
                   {banning ? 'Banning…' : 'Confirm ban'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unban all modal */}
+      {unbanAllModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setUnbanAllModal(false)} />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-amber-500" />
+              <span className="font-semibold text-slate-900 dark:text-white">Unban IP</span>
+            </div>
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              Delete all <strong>{decisions.length}</strong> active decision{decisions.length > 1 ? 's' : ''} for{' '}
+              <code className="font-mono text-xs">{ip}</code> ?
+            </p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setUnbanAllModal(false)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                Cancel
+              </button>
+              <button type="button" onClick={() => void handleUnbanAll()} disabled={unbanning}
+                className="flex-1 rounded-xl bg-amber-500 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60">
+                {unbanning ? 'Unbanning…' : 'Confirm Unban'}
+              </button>
             </div>
           </div>
         </div>
