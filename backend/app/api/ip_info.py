@@ -119,15 +119,21 @@ def get_ip_alerts(
     db: Annotated[Session, Depends(get_db)],
     _: Annotated[User, Depends(get_current_user)],
     page: int = 1,
-    limit: int = 25,
+    limit: int = 10,
+    scenario: str | None = None,
+    target_host: str | None = None,
 ) -> dict[str, Any]:
-    """All stored alerts for a specific attacker IP, paginated."""
+    """All stored alerts for a specific attacker IP, paginated + filterable."""
     limit = max(1, min(limit, 200))
     q = (
         db.query(StoredAlert)
         .filter(StoredAlert.source_ip == ip)
         .order_by(StoredAlert.start_at.desc())
     )
+    if scenario:
+        q = q.filter(StoredAlert.scenario.ilike(f"%{scenario}%"))
+    if target_host:
+        q = q.filter(StoredAlert.target_host.ilike(f"%{target_host}%"))
     total = q.count()
     rows = q.offset((page - 1) * limit).limit(limit).all()
 
@@ -160,26 +166,120 @@ def get_ip_decisions(
     ip: str,
     db: Annotated[Session, Depends(get_db)],
     _: Annotated[User, Depends(get_current_user)],
-) -> list[dict[str, Any]]:
-    """All stored decisions for a specific IP."""
-    rows = (
+    page: int = 1,
+    limit: int = 10,
+    type_filter: str | None = None,
+) -> dict[str, Any]:
+    """All stored decisions for a specific IP, paginated + filterable."""
+    limit = max(1, min(limit, 200))
+    q = (
         db.query(StoredDecision)
         .filter(StoredDecision.ip_value == ip)
         .order_by(StoredDecision.synced_at.desc())
-        .limit(100)
-        .all()
     )
-    return [
-        {
-            "id": r.id,
-            "type": r.decision_type,
-            "scenario": r.scenario,
-            "duration": r.duration_str,
-            "until": r.until.isoformat() if r.until else None,
-            "synced_at": r.synced_at.isoformat() if r.synced_at else None,
-        }
-        for r in rows
-    ]
+    if type_filter:
+        q = q.filter(StoredDecision.decision_type.ilike(f"%{type_filter}%"))
+    total = q.count()
+    rows = q.offset((page - 1) * limit).limit(limit).all()
+    return {
+        "total": total,
+        "page": page,
+        "pages": math.ceil(total / limit) if total else 0,
+        "decisions": [
+            {
+                "id": r.id,
+                "type": r.decision_type,
+                "scenario": r.scenario,
+                "duration": r.duration_str,
+                "until": r.until.isoformat() if r.until else None,
+                "synced_at": r.synced_at.isoformat() if r.synced_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/{ip}/requests")
+def get_ip_requests(
+    ip: str,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[User, Depends(get_current_user)],
+    page: int = 1,
+    limit: int = 10,
+    method: str | None = None,
+    status: str | None = None,
+    path_filter: str | None = None,
+) -> dict[str, Any]:
+    """HTTP requests from a specific IP parsed from the Traefik access log."""
+    import json as _json
+    import subprocess
+    import shlex
+    from pathlib import Path
+
+    from app.settings import get_settings
+    from app.api.logs_api import _resolve_path
+
+    s = get_settings()
+    log_path = _resolve_path(db, "log_path_access", s.traefik_log_path)
+    if not log_path or not log_path.exists():
+        return {"available": False, "total": 0, "page": 1, "pages": 0, "entries": []}
+
+    limit = max(1, min(limit, 200))
+
+    # Grep for IP in log file (fast pre-filter)
+    quoted = shlex.quote(str(log_path))
+    pipeline = f"grep -a {shlex.quote(ip)} {quoted} | tail -n 5000"
+    try:
+        result = subprocess.run(["sh", "-c", pipeline], capture_output=True, text=True, timeout=30)
+        raw_lines = result.stdout.splitlines()
+    except Exception:
+        raw_lines = []
+
+    entries: list[dict[str, Any]] = []
+    method_lc = method.lower() if method else None
+    path_lc = path_filter.lower() if path_filter else None
+
+    for line in reversed(raw_lines):
+        try:
+            e = _json.loads(line)
+        except Exception:
+            continue
+
+        client = (e.get("ClientHost") or (e.get("ClientAddr") or "").split(":")[0])
+        if client != ip:
+            continue
+
+        req_method = e.get("RequestMethod", "")
+        req_path = e.get("RequestPath") or e.get("RequestURI", "")
+        code = e.get("DownstreamStatus") or e.get("OriginStatus")
+        host = (e.get("RequestHost") or "").lower().split(":")[0]
+        time_str = e.get("StartUTC") or e.get("time") or ""
+
+        if method_lc and req_method.lower() != method_lc:
+            continue
+        if path_lc and path_lc not in req_path.lower():
+            continue
+        if status:
+            cat = str(code)[0] + "xx" if code else ""
+            if status != cat and str(code) != status:
+                continue
+
+        entries.append({
+            "time": time_str,
+            "host": host,
+            "method": req_method,
+            "path": req_path,
+            "status": code,
+            "duration_ms": round((e.get("Duration") or 0) / 1_000_000, 1),
+            "bytes": e.get("DownstreamContentSize"),
+            "router": e.get("RouterName"),
+            "user_agent": e.get("request_User-Agent") or e.get("RequestUserAgent"),
+        })
+
+    total = len(entries)
+    pages = math.ceil(total / limit) if total else 0
+    paged = entries[(page - 1) * limit: page * limit]
+    return {"available": True, "total": total, "page": page, "pages": pages, "entries": paged}
 
 
 @router.get("/{ip}/timeline")
