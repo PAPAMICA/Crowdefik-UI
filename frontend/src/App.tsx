@@ -26,6 +26,8 @@ const LogsTraefikPage = lazy(() => import('./pages/LogsTraefikPage').then((m) =>
 const LogsCrowdSecPage = lazy(() => import('./pages/LogsCrowdSecPage').then((m) => ({ default: m.LogsCrowdSecPage })))
 const AllowlistPage    = lazy(() => import('./pages/AllowlistPage').then((m) => ({ default: m.AllowlistPage })))
 const RulesPage        = lazy(() => import('./pages/RulesPage').then((m) => ({ default: m.RulesPage })))
+const ScenariosPage    = lazy(() => import('./pages/ScenariosPage').then((m) => ({ default: m.ScenariosPage })))
+const ScenarioPage     = lazy(() => import('./pages/ScenarioPage').then((m) => ({ default: m.ScenarioPage })))
 
 function PageLoader() {
   return (
@@ -80,6 +82,8 @@ export default function App() {
                   <Route path="/logs/crowdsec" element={<LogsCrowdSecPage />} />
                   <Route path="/crowdsec/allowlist" element={<AllowlistPage />} />
                   <Route path="/crowdsec/rules" element={<RulesPage />} />
+                  <Route path="/scenarios" element={<ScenariosPage />} />
+                  <Route path="/scenarios/:scenario" element={<ScenarioPage />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

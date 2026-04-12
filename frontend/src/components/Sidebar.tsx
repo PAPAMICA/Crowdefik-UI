@@ -75,6 +75,7 @@ const NAV = [
   { to: '/routers', icon: GanttChartSquare, label: 'Services', color: 'text-blue-500' },
   { to: '/alerts', icon: ShieldAlert, label: 'Alerts', color: 'text-amber-500' },
   { to: '/decisions', icon: Shield, label: 'Decisions', color: 'text-red-500' },
+  { to: '/scenarios', icon: BookOpen, label: 'Scenarios', color: 'text-violet-400' },
 ]
 
 const INFRA_NAV = [

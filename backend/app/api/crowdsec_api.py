@@ -236,17 +236,24 @@ def bulk_unban(
     user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, Any]:
     """Delete multiple CrowdSec decisions (bulk unban, superuser only)."""
+    from app.models import StoredDecision
     if not user.is_superuser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser required")
     if not body.ids:
         raise HTTPException(status_code=400, detail="ids list is empty")
     success, failed = 0, []
+    deleted_ids = []
     for decision_id in body.ids:
         res = crowdsec_client.delete_decision(db, decision_id)
         if res.get("ok"):
             success += 1
+            deleted_ids.append(decision_id)
         else:
             failed.append(decision_id)
+    # Remove successfully deleted decisions from local DB
+    if deleted_ids:
+        db.query(StoredDecision).filter(StoredDecision.id.in_(deleted_ids)).delete(synchronize_session=False)
+        db.commit()
     cache_mod.invalidate_prefix("crowdsec:")
     log_action(db, user, "bulk_unban", detail=f"success={success} failed={len(failed)}")
     return {"ok": True, "success": success, "failed": failed}
@@ -258,12 +265,18 @@ def unban_decision(
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, Any]:
-    """Delete a CrowdSec decision (unban an IP)."""
+    """Delete a CrowdSec decision (unban an IP) and remove it from local DB."""
+    from app.models import StoredDecision
     if not user.is_superuser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser required")
     result = crowdsec_client.delete_decision(db, decision_id)
     if not result.get("ok"):
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result.get("error", "Unknown error"))
+    # Also remove from local StoredDecision table so the UI reflects the change immediately
+    local = db.query(StoredDecision).filter(StoredDecision.id == decision_id).first()
+    if local:
+        db.delete(local)
+        db.commit()
     cache_mod.invalidate_prefix("crowdsec:")
     log_action(db, user, "unban", target=str(decision_id))
     return result
