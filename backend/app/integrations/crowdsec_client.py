@@ -366,14 +366,21 @@ def get_machines(db: Session) -> list[dict[str, Any]]:
 # ── Unban ─────────────────────────────────────────────────────
 
 def delete_decision(db: Session, decision_id: int) -> dict[str, Any]:
-    """Delete (unban) a decision by its CrowdSec ID."""
-    h = _bouncer_headers(db)
+    """Delete (unban) a decision by its CrowdSec ID.
+
+    Requires watcher (machine) JWT — the bouncer key is read-only.
+    Falls back to bouncer key only as a last resort (older LAPI setups).
+    """
     base = _base(db)
+    # Prefer watcher JWT; bouncer key cannot delete decisions on most LAPI versions
+    h = _watcher_headers(db) or _bouncer_headers(db)
     if not h:
-        return {"ok": False, "error": "No API key configured"}
+        return {"ok": False, "error": "No API credentials configured (need machine login or bouncer key)"}
     try:
         with httpx.Client(timeout=8.0) as client:
             r = client.delete(f"{base}/v1/decisions/{decision_id}", headers=h)
+            if r.status_code == 403 and _watcher_headers(db) is None:
+                return {"ok": False, "error": "403 Forbidden — configure machine credentials (watcher) to delete decisions"}
             r.raise_for_status()
             return {"ok": True, "id": decision_id}
     except httpx.HTTPStatusError as exc:
