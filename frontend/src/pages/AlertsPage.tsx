@@ -592,9 +592,7 @@ export function AlertsPage() {
       {rows.length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <MiniDonut title="Scenario distribution" data={scenarioDist} />
-          <MiniDonut title="Source IP distribution" data={ipDist}
-            renderLabel={(e) => <IpBadge ip={e.name} compact />}
-          />
+          <MiniDonut title="Source IP distribution" data={ipDist} />
           <MiniDonut title="Target service distribution" data={serviceDist}
             renderLabel={(e) => (
               <span className="flex items-center gap-1.5 truncate">
