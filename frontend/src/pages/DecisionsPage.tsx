@@ -98,25 +98,6 @@ const PAGE_SIZE = 100
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-const SCENARIO_PALETTES = [
-  'bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20',
-  'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20',
-  'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20',
-  'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/20',
-  'bg-lime-500/10 text-lime-700 dark:text-lime-400 border-lime-500/20',
-  'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
-  'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border-cyan-500/20',
-  'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20',
-  'bg-violet-500/10 text-violet-700 dark:text-violet-400 border-violet-500/20',
-  'bg-pink-500/10 text-pink-700 dark:text-pink-400 border-pink-500/20',
-]
-
-function scenarioColor(scenario: string): string {
-  let hash = 0
-  for (let i = 0; i < scenario.length; i++) hash = ((hash * 31) + scenario.charCodeAt(i)) >>> 0
-  return SCENARIO_PALETTES[hash % SCENARIO_PALETTES.length]
-}
-
 function extractCountry(d: Decision): string {
   const cc = (d.country_code || d.countryCode || d.cn || '') as string
   return typeof cc === 'string' ? cc.toUpperCase() : ''
