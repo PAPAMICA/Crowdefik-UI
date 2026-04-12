@@ -1146,7 +1146,126 @@ const KNOWLEDGE: Record<string, AttackInfo> = {
  * Returns attack info for a given scenario name, doing fuzzy matching
  * against known keys.
  */
+// ── WAF anomaly score parser ────────────────────────────────────────────────
+
+const WAF_TYPE_LABELS: Record<string, string> = {
+  xss: 'XSS',
+  sql_injection: 'SQL Injection',
+  lfi: 'LFI / Path Traversal',
+  rce: 'Remote Code Execution',
+  php_injection: 'PHP Injection',
+  http_violation: 'HTTP Protocol Violation',
+  anomaly: 'Anomaly',
+}
+
+const WAF_TYPE_DESCRIPTIONS: Record<string, string> = {
+  xss: 'Cross-Site Scripting (XSS)',
+  sql_injection: 'SQL Injection',
+  lfi: 'Local File Inclusion / Path Traversal',
+  rce: 'Remote Code Execution',
+  php_injection: 'PHP Code Injection',
+  http_violation: 'HTTP Protocol Violation',
+}
+
+const WAF_IMPACTS: Record<string, string> = {
+  xss: 'Session hijacking, credential theft, malicious script execution in victim browsers.',
+  sql_injection: 'Unauthorized data access, authentication bypass, potential data exfiltration.',
+  lfi: 'Unauthorized access to sensitive files (config, passwords, source code).',
+  rce: 'Full server compromise, arbitrary code execution as the web server user.',
+  php_injection: 'Arbitrary PHP code execution, full server compromise.',
+  http_violation: 'Request smuggling, WAF bypass, cache poisoning.',
+}
+
+/**
+ * Parse a CrowdSec AppSec WAF anomaly score scenario string like:
+ * "anomaly score block: xss: 30, rce: 5, anomaly: 35,"
+ * and return a synthetic AttackInfo.
+ */
+export function parseWafAnomalyInfo(scenario: string): AttackInfo | null {
+  const lower = scenario.toLowerCase()
+  if (!lower.includes('anomaly score') && !lower.includes('anomaly score block')) return null
+
+  // Parse all type: score pairs
+  const scores: Record<string, number> = {}
+  const re = /([a-z_]+):\s*(\d+)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(lower)) !== null) {
+    if (m[1] !== 'anomaly') scores[m[1]] = (scores[m[1]] ?? 0) + parseInt(m[2])
+  }
+
+  // Also get total anomaly score
+  const anomalyMatch = /anomaly:\s*(\d+)/g
+  let totalAnomaly = 0
+  let am: RegExpExecArray | null
+  while ((am = anomalyMatch.exec(lower)) !== null) totalAnomaly = Math.max(totalAnomaly, parseInt(am[1]))
+
+  const attackTypes = Object.entries(scores).sort((a, b) => b[1] - a[1])
+
+  if (attackTypes.length === 0 && totalAnomaly === 0) return null
+
+  // Severity based on total anomaly score
+  const severity: AttackInfo['severity'] =
+    totalAnomaly >= 80 ? 'critical'
+    : totalAnomaly >= 40 ? 'high'
+    : totalAnomaly >= 20 ? 'medium'
+    : 'low'
+
+  const typeLabels = attackTypes.map(([t]) => WAF_TYPE_LABELS[t] ?? t)
+  const title =
+    typeLabels.length === 0
+      ? 'WAF Anomaly Block'
+      : typeLabels.length === 1
+        ? `WAF Block — ${typeLabels[0]}`
+        : `WAF Block — ${typeLabels.slice(0, 3).join(' + ')}`
+
+  const dominantType = attackTypes[0]?.[0]
+  const dominantDesc = dominantType ? WAF_TYPE_DESCRIPTIONS[dominantType] : null
+  const scoresList = attackTypes
+    .map(([t, s]) => `${WAF_TYPE_LABELS[t] ?? t} (score: ${s})`)
+    .join(', ')
+
+  const description =
+    `CrowdSec AppSec WAF blocked this request using anomaly scoring (total: ${totalAnomaly}). ` +
+    (dominantDesc
+      ? `Primary threat: ${dominantDesc}. `
+      : '') +
+    (scoresList
+      ? `Detected attack categories: ${scoresList}.`
+      : 'Request exceeded the anomaly threshold without a specific category.')
+
+  const impact =
+    attackTypes.map(([t]) => WAF_IMPACTS[t]).filter(Boolean)[0]
+    ?? 'Potential web application attack — request was blocked by the WAF.'
+
+  const examples = attackTypes.flatMap(([t]) => {
+    const infoKey = t === 'lfi' ? 'http_path_traversal_probing'
+      : t === 'sql_injection' ? 'http_sqli_probing'
+      : t === 'xss' ? 'http_xss_probing'
+      : null
+    return infoKey ? (KNOWLEDGE[infoKey]?.examples ?? []) : []
+  }).slice(0, 3)
+
+  return {
+    title,
+    severity,
+    category: 'WAF / AppSec',
+    description,
+    impact,
+    examples,
+    mitigation: [
+      'Review the full request context in access logs',
+      'Check if the source IP is a known scanner or malicious actor',
+      'Tune AppSec thresholds if legitimate traffic is being blocked',
+      'Consider adding source IPs to CrowdSec allowlist if false positive',
+    ],
+  }
+}
+
 export function getAttackInfo(scenario: string): AttackInfo | null {
+  // Handle WAF anomaly score strings first (these come from AppSec WAF)
+  const wafInfo = parseWafAnomalyInfo(scenario)
+  if (wafInfo) return wafInfo
+
   // Normalize: remove prefix, replace separators
   const normalized = scenario
     .toLowerCase()

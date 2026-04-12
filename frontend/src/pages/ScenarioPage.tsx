@@ -13,7 +13,7 @@ import { useAuth } from '../auth'
 import { IpBadge } from '../components/IpBadge'
 import { Skeleton, SkeletonCard } from '../components/Skeleton'
 import { faviconUrl } from '../utils/favicon'
-import { getAttackInfo, SEVERITY_CLASSES } from '../utils/attackKnowledge'
+import { getAttackInfo, parseWafAnomalyInfo, SEVERITY_CLASSES } from '../utils/attackKnowledge'
 
 const CHART_COLORS = ['#6366f1', '#f59e0b', '#ef4444', '#10b981', '#3b82f6', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316', '#64748b']
 
@@ -35,8 +35,17 @@ type ScenarioData = {
   recent_alerts: RecentAlert[]
 }
 
+function isWafAnomaly(s: string) {
+  return s.toLowerCase().includes('anomaly score')
+}
+
 function scenarioLabel(s: string) {
-  return s.replace('crowdsecurity/', '').replace(/-/g, ' ')
+  if (isWafAnomaly(s)) {
+    // Use the parsed title from attackKnowledge
+    const info = parseWafAnomalyInfo(s)
+    return info ? info.title : s.replace(/^anomaly score block:\s*/i, 'WAF Block: ')
+  }
+  return s.replace('crowdsecurity/', '').replace('ltsich/', '').replace(/-/g, ' ')
 }
 
 function StatCard({ icon: Icon, label, value, color }: {
@@ -91,7 +100,7 @@ export function ScenarioPage() {
           </button>
           <div>
             <div className="flex flex-wrap items-center gap-3">
-              <h1 className="font-mono text-xl font-bold text-slate-900 dark:text-white">
+              <h1 className="text-xl font-bold text-slate-900 dark:text-white">
                 {scenarioLabel(scenario)}
               </h1>
               {info && (
@@ -105,9 +114,14 @@ export function ScenarioPage() {
                 </span>
               )}
             </div>
-            {info && (
+            {/* For WAF anomaly: show raw scores; for named scenarios: show info.title */}
+            {isWafAnomaly(scenario) ? (
+              <p className="mt-1 font-mono text-xs text-slate-400 dark:text-slate-500">
+                {scenario.replace(/^anomaly score block:\s*/i, '').replace(/,\s*$/, '')}
+              </p>
+            ) : info ? (
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{info.title}</p>
-            )}
+            ) : null}
           </div>
         </div>
         <button type="button" onClick={load}

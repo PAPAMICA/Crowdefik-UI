@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api'
 import { Skeleton } from '../components/Skeleton'
-import { getAttackInfo, SEVERITY_CLASSES } from '../utils/attackKnowledge'
+import { getAttackInfo, parseWafAnomalyInfo, SEVERITY_CLASSES } from '../utils/attackKnowledge'
 
 type ScenarioRow = {
   scenario: string
@@ -18,8 +18,12 @@ type ScenarioRow = {
   top_target: string | null
 }
 
+function isWafAnomaly(s: string) {
+  return s.toLowerCase().includes('anomaly score')
+}
+
 function scenarioLabel(s: string) {
-  return s.replace('crowdsecurity/', '').replace(/-/g, ' ')
+  return s.replace('crowdsecurity/', '').replace('ltsich/', '').replace(/-/g, ' ')
 }
 
 export function ScenariosPage() {
@@ -104,7 +108,16 @@ export function ScenariosPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((row) => {
             const info = getAttackInfo(row.scenario)
+            const waf = isWafAnomaly(row.scenario)
             const sev = info ? SEVERITY_CLASSES[info.severity] : SEVERITY_CLASSES.info
+            // For WAF anomaly scenarios, use the parsed title as the primary display name
+            const displayTitle = waf && info ? info.title : scenarioLabel(row.scenario)
+            const displaySubtitle = waf && info ? null : (info ? info.title : null)
+            // For WAF, show the raw scores as a compact secondary line
+            const rawScores = waf
+              ? row.scenario.replace(/^anomaly score block:\s*/i, '').replace(/,\s*$/, '')
+              : null
+
             return (
               <Link
                 key={row.scenario}
@@ -114,11 +127,14 @@ export function ScenariosPage() {
                 {/* Top row */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <div className="truncate font-mono text-sm font-semibold text-slate-900 group-hover:text-violet-600 dark:text-white dark:group-hover:text-violet-400 transition-colors">
-                      {scenarioLabel(row.scenario)}
+                    <div className="truncate font-semibold text-sm text-slate-900 group-hover:text-violet-600 dark:text-white dark:group-hover:text-violet-400 transition-colors">
+                      {displayTitle}
                     </div>
-                    {info && (
-                      <div className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">{info.title}</div>
+                    {displaySubtitle && (
+                      <div className="mt-0.5 truncate font-mono text-xs text-slate-500 dark:text-slate-400">{displaySubtitle}</div>
+                    )}
+                    {rawScores && (
+                      <div className="mt-0.5 truncate font-mono text-[10px] text-slate-400 dark:text-slate-500">{rawScores}</div>
                     )}
                   </div>
                   {info && (
