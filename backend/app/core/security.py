@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import PyJWTError
 from passlib.context import CryptContext
 
 from app.settings import get_settings
@@ -27,5 +28,5 @@ def decode_token(token: str) -> dict:
     s = get_settings()
     try:
         return jwt.decode(token, s.jwt_secret, algorithms=[s.jwt_algorithm])
-    except JWTError as e:
+    except PyJWTError as e:
         raise ValueError("invalid token") from e
